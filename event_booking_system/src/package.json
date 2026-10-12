@@ -1,0 +1,13 @@
+{
+  "name": "event-booking-system",
+  "version": "1.0.0",
+  "description": "A simple event booking system",
+  "main": "index.js",
+  "scripts": {
+    "demo": "node index.js",
+    "benchmark": "node benchmark.js"
+  },
+  "dependencies": {
+    "express": "^5.3.0"
+  }
+}
