@@ -31,6 +31,7 @@ const MIME_TYPES = {
 const STATUS_BY_CODE = {
   VALIDATION: 400,
   UNAUTHORIZED: 401,
+  PAYMENT_DECLINED: 402,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   SOLD_OUT: 409,
@@ -128,7 +129,9 @@ export function createApp({ router, publicDir }) {
         const body = hasBody(req.method) ? parseJson(await readBody(req)) : undefined;
         const result = await route.handler({ req, res, params: route.params, body, query: url.searchParams });
         if (res.writableEnded) return;
-        sendJson(res, 200, result === undefined ? null : result);
+        // A handler may set res.statusCode (for example 201 after a create);
+        // it defaults to 200, so most handlers never touch it.
+        sendJson(res, res.statusCode, result === undefined ? null : result);
         return;
       }
 

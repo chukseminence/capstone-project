@@ -27,7 +27,7 @@ flowchart TD
         search["eventSearch.js / sorting.js"]
     end
 
-    subgraph dataLayer["Data layer - src/data (Build 4-5)"]
+    subgraph dataLayer["Data layer - src/repositories (Build 4-5)"]
         repositories["repositories / SQLite"]
     end
 
@@ -54,11 +54,14 @@ What each layer may and may not do:
 - **Domain layer (`src/domain`)** may hold the pure rules: the booking state
   machine, the inventory and capacity rules, search and sorting. It may **not**
   do any I/O, and it knows nothing about HTTP or the database.
-- **Data layer (`src/data`)** may read and write persistent storage (SQLite in
-  Build 5). It may **not** contain business rules; it only stores and fetches.
+- **Data layer (`src/repositories`)** may read and write persistent storage
+  (SQLite in Build 5). It may **not** contain business rules; it only stores and
+  fetches. Build 4 has `memory.js`, whose async methods match what the SQLite
+  repository will offer.
 
-In Build 3 only the HTTP layer, the domain layer and the entry point exist.
-The service and data layers arrive in Build 4.
+In Build 4 all four layers exist. The services and the repositories are new;
+`src/lib/mockPaymentGateway.js` is a small helper the booking service depends on
+instead of a real payment provider.
 
 ## 2. The data model
 
@@ -144,16 +147,22 @@ src/
     app.js
     router.js
     routes.js
-  services/ one function per use case      (Build 4)
+  services/ one function per use case
+    eventService.js
+    bookingService.js
   domain/   the pure rules                 (no I/O)
     bookingStateMachine.js
     inventory.js
     eventSearch.js
     sorting.js
+    validation.js
     errors.js
     ids.js
     waitlistQueue.js
-  data/     storage and repositories       (Build 4-5)
+  repositories/ storage and repositories
+    memory.js
+  lib/      helpers with no rules of their own
+    mockPaymentGateway.js
   config.js environment and defaults
   server.js the entry point
 public/     static files served by app.js

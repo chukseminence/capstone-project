@@ -7,14 +7,7 @@
 
 import { mergeSort } from './sorting.js';
 import { DomainError } from './errors.js';
-
-function requireValidDate(value, field) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    throw new DomainError('VALIDATION', `${field} must be a valid date`);
-  }
-  return date;
-}
+import { requireValidDate } from './validation.js';
 
 // The tie-breaker for every sort: title first, then id, so the order is total.
 function byTitleThenId(a, b) {
