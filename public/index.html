@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Event Ticketing - Build 3</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <h1>Event Ticketing and Booking</h1>
+    <p class="lede">Build 3: architecture, booking state machine and the server skeleton.</p>
+
+    <section class="card">
+      <h2>Server health</h2>
+      <p>The button asks <code>GET /health</code> and shows what comes back.</p>
+      <button id="ping" type="button">Check /health</button>
+      <pre id="health" aria-live="polite">Not checked yet.</pre>
+    </section>
+
+    <section class="card">
+      <h2>What works today</h2>
+      <ul>
+        <li>This page is served as a static file from <code>public/</code>.</li>
+        <li><code>GET /health</code> returns <code>{"status":"ok"}</code>.</li>
+        <li>Unknown <code>/api</code> paths return a JSON 404.</li>
+      </ul>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
