@@ -4,7 +4,7 @@
 
 import { referenceCode } from '../src/domain/ids.js';
 
-const BOOKINGS = 100_000;
+const BOOKINGS = 200_000;  //was 100_000 before
 const LOOKUPS = 500;
 
 const list = [];
@@ -15,7 +15,10 @@ for (let i = 0; i < BOOKINGS; i += 1) {
   map.set(booking.reference, booking);
 }
 
-const targets = Array.from({ length: LOOKUPS }, () => list[Math.floor(Math.random() * BOOKINGS)].reference);
+const targets = Array.from(
+  { length: LOOKUPS },
+  () => list[Math.floor(Math.random() * BOOKINGS)].reference,
+);
 
 function time(label, lookup) {
   const start = performance.now();

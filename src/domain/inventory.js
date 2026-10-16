@@ -2,7 +2,7 @@
 // No server, no database. Just objects, Maps and rules.
 // Build 4 replaces this file with services + repositories.
 
-import { newId, referenceCode } from './ids.js';
+import { newId, newReference } from './ids.js';
 import { Queue } from './waitlistQueue.js';
 import { DomainError } from './errors.js';
 
@@ -29,10 +29,24 @@ function requireText(value, field) {
 }
 
 function requireWholeNumber(value, field, min) {
-  if (!Number.isInteger(value) || value < min) {
+  if (!Number.isSafeInteger(value) || value < min) {
     throw new DomainError('VALIDATION', `${field} must be a whole number of at least ${min}`);
   }
   return value;
+}
+
+function requireStore(store) {
+  if (!store || !(store.events instanceof Map) || !(store.tiers instanceof Map)
+    || !(store.bookings instanceof Map) || !(store.bookingsByReference instanceof Map)
+    || !(store.waitlists instanceof Map)) {
+    throw new DomainError('VALIDATION', 'A valid store is required');
+  }
+}
+
+function requireObject(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new DomainError('VALIDATION', `${field} must be an object`);
+  }
 }
 
 function getTier(store, tierId) {
@@ -41,7 +55,17 @@ function getTier(store, tierId) {
   return tier;
 }
 
-export function createEvent(store, { title, city, venue = '', startsAt, organizerId }) {
+export function createEvent(store, details) {
+  requireStore(store);
+  requireObject(details, 'Event');
+  const { title, city, venue = '', startsAt, organizerId } = details;
+  requireText(organizerId, 'Organizer ID');
+  if (typeof startsAt !== 'string' || startsAt.trim() === '') {
+    throw new DomainError('VALIDATION', 'startsAt is required and must be a valid date');
+  }
+  if (typeof venue !== 'string') {
+    throw new DomainError('VALIDATION', 'Venue must be text');
+  }
   const date = new Date(startsAt);
   if (Number.isNaN(date.getTime())) {
     throw new DomainError('VALIDATION', 'startsAt must be a valid date');
@@ -60,7 +84,11 @@ export function createEvent(store, { title, city, venue = '', startsAt, organize
   return event;
 }
 
-export function addTier(store, eventId, { name, priceCents, capacity }) {
+export function addTier(store, eventId, details) {
+  requireStore(store);
+  requireText(eventId, 'Event ID');
+  requireObject(details, 'Ticket tier');
+  const { name, priceCents, capacity } = details;
   const event = store.events.get(eventId);
   if (!event) throw new DomainError('NOT_FOUND', 'Event not found');
 
@@ -80,10 +108,17 @@ export function addTier(store, eventId, { name, priceCents, capacity }) {
 }
 
 export function seatsLeft(tier) {
+  if (!tier || !Number.isSafeInteger(tier.capacity) || !Number.isSafeInteger(tier.sold)
+    || tier.capacity < 0 || tier.sold < 0 || tier.sold > tier.capacity) {
+    throw new DomainError('VALIDATION', 'A valid ticket tier is required');
+  }
   return tier.capacity - tier.sold;
 }
 
 export function bookTickets(store, tierId, userId, quantity) {
+  requireStore(store);
+  requireText(tierId, 'Tier ID');
+  requireText(userId, 'User ID');
   const tier = getTier(store, tierId);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_TICKETS_PER_BOOKING) {
     throw new DomainError('VALIDATION', `quantity must be between 1 and ${MAX_TICKETS_PER_BOOKING}`);
@@ -95,11 +130,9 @@ export function bookTickets(store, tierId, userId, quantity) {
     throw new DomainError('SOLD_OUT', message, { seatsLeft: left });
   }
 
-  tier.sold += quantity;
-
   let reference;
   do {
-    reference = referenceCode();
+    reference = newReference();
   } while (store.bookingsByReference.has(reference));
 
   const booking = {
@@ -112,16 +145,20 @@ export function bookTickets(store, tierId, userId, quantity) {
     status: 'pending',
     createdAt: new Date().toISOString(),
   };
+  tier.sold += quantity;
   store.bookings.set(booking.id, booking);
   store.bookingsByReference.set(reference, booking);
   return booking;
 }
 
 export function findBookingByReference(store, reference) {
+  requireStore(store);
+  requireText(reference, 'Booking reference');
   return store.bookingsByReference.get(reference);
 }
 
 export function cancelBooking(store, reference) {
+  requireStore(store);
   const booking = findBookingByReference(store, reference);
   if (!booking) throw new DomainError('NOT_FOUND', 'Booking not found');
   if (!HOLDS_SEATS.has(booking.status)) {
@@ -133,6 +170,9 @@ export function cancelBooking(store, reference) {
 }
 
 export function joinWaitlist(store, tierId, userId, quantity) {
+  requireStore(store);
+  requireText(tierId, 'Tier ID');
+  requireText(userId, 'User ID');
   const tier = getTier(store, tierId);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_TICKETS_PER_BOOKING) {
     throw new DomainError('VALIDATION', `quantity must be between 1 and ${MAX_TICKETS_PER_BOOKING}`);
@@ -148,6 +188,8 @@ export function joinWaitlist(store, tierId, userId, quantity) {
 // Strict first-in-first-out: only the person at the head of the line is considered.
 // Discussion question for class: what happens if the head wants 4 seats and only 1 is free?
 export function offerNextOnWaitlist(store, tierId) {
+  requireStore(store);
+  requireText(tierId, 'Tier ID');
   const tier = getTier(store, tierId);
   const queue = store.waitlists.get(tierId);
   const head = queue.peek();
