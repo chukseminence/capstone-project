@@ -39,9 +39,17 @@ export function createBookingService(repository, paymentGateway) {
       const tier = await repository.findTierById(tierId);
       if (!tier) throw new DomainError('NOT_FOUND', 'Ticket tier not found');
 
-      const left = seatsLeft(tier);
-      if (left < quantity) {
-        const message = left === 0 ? `${tier.name} is sold out` : `Only ${left} ticket(s) left in ${tier.name}`;
+      // Reserve the seats FIRST, atomically, and only then build the booking.
+      // If two callers race for the last seat, exactly one UPDATE changes a row
+      // (the other gets changes = 0) so only one wins. Never check then save:
+      // an await between the two lets another caller slip in.
+      const won = await repository.reserveSeats(tierId, quantity);
+      if (!won) {
+        const fresh = await repository.findTierById(tierId);
+        const left = fresh ? seatsLeft(fresh) : 0;
+        const message = left <= 0
+          ? `${tier.name} is sold out`
+          : `Only ${left} ticket(s) left in ${tier.name}`;
         throw new DomainError('SOLD_OUT', message, { seatsLeft: left });
       }
 
@@ -56,9 +64,6 @@ export function createBookingService(repository, paymentGateway) {
         createdAt: new Date().toISOString(),
       };
 
-      // Booking holds the seats straight away. Paying just confirms them.
-      tier.sold += quantity;
-      await repository.saveTier(tier);
       return repository.saveBooking(booking);
     },
 
@@ -94,11 +99,8 @@ export function createBookingService(repository, paymentGateway) {
         throw new DomainError('INVALID_TRANSITION', 'Only an unpaid booking can be cancelled');
       }
 
-      const tier = await repository.findTierById(booking.tierId);
-      if (tier) {
-        tier.sold = Math.max(0, tier.sold - booking.quantity);
-        await repository.saveTier(tier);
-      }
+      // Give the seats back with the same atomic step, never a bare assignment.
+      await repository.releaseSeats(booking.tierId, booking.quantity);
 
       booking.status = 'cancelled';
       booking.cancelledAt = new Date().toISOString();

@@ -36,4 +36,18 @@ Every time you give an AI tool a significant prompt, add an entry. Three lines e
 - **What came back:** All 53 tests green, and a live run where create -> tier -> publish -> search -> book -> declined pay -> successful pay -> cancel behaved exactly as documented.
 - **What was wrong (or "nothing"):** Nothing in the code. The first curl script failed because PowerShell mangles `\"` inside a double-quoted string (the body arrived as invalid JSON); passing the body from a file fixed the harness, not the API. Worth remembering for the demo.
 
+## Build 5
+
+### Prompt 1: Build 5 prompt, part 1 (docs/build-5.md)
+
+- **What I asked:** Move storage to SQLite using `node:sqlite` (still no outside packages): `src/db/schema.sql` and `src/db/connection.js` with tables for users, events, ticket_tiers and bookings and PRIMARY KEY / FOREIGN KEY / UNIQUE / CHECK constraints, including `CHECK (sold >= 0 AND sold <= capacity)`; a `src/repositories/sqlite.js` with the same methods as `memory.js` (placeholders only, never string-built SQL); `scripts/seed.js` plus a `seed` script; and `scripts/oversell-demo.js` plus an `oversell` script that fires 50 simultaneous bookings at the last seat. Do not fix overselling yet.
+- **What came back:** The schema, the connection, the SQLite repository, the seed script, the demo, and SQLite wired in as the server's default repository. The API tests now run against an in-memory SQLite database and still pass unchanged, which shows the services really did not learn where the data lives.
+- **What was wrong (or "nothing"):** Two things. (1) The first demo printed "seats sold = 0" for the broken case, because I had made `saveTier` skip the `sold` column; that hid the bug behind a wrong-looking zero. I made `saveTier` write the whole row (matching `memory.js`) and had the naive path create real booking rows, so "before" now honestly shows 50 bookings for 1 seat. (2) Foreign keys are OFF in SQLite by default, so `REFERENCES` did nothing until I ran `PRAGMA foreign_keys = ON` on every connection.
+
+### Prompt 2: Build 5 prompt, part 2 - fix it in the database
+
+- **What I asked:** Fix the overselling in the database, not in JavaScript: reserve with one atomic `UPDATE ... WHERE sold + ? <= capacity`, use the changed-row count to decide who won, throw `SOLD_OUT` when no row changed; no lock variable and no double check; add `test/oversell.test.js` (50 for 1 -> 1 success, 49 `SOLD_OUT`) that fails if the fix is removed; and show the demo before and after.
+- **What came back:** `reserveSeats`/`releaseSeats` on both repositories, `bookingService.book` reserving before it builds the booking, `bookingService.cancel` releasing the same way, and the oversell demo printing "before" (50 bookings, 49 accepted) and "after" (1 booking, 49 `SOLD_OUT`).
+- **What was wrong (or "nothing"):** Nothing broken, but two things worth stating. A lock variable or a double check both fail because the gap between "read the count" and "write the count" is exactly where the other fifty callers run; only a single statement with the condition inside it closes that gap. And the test file now has a second test that runs the OLD check-then-write booking and asserts it oversells - that is what makes the first test meaningful, because if the fix is removed the first test fails for the same reason the second one passes.
+
 

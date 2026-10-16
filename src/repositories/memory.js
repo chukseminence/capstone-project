@@ -35,6 +35,22 @@ export function createMemoryRepository() {
       return [...tiers.values()];
     },
 
+    // The memory twin of the SQL atomic update. There is no await inside, so
+    // nothing can interleave between the check and the increment.
+    async reserveSeats(tierId, quantity) {
+      const tier = tiers.get(tierId);
+      if (!tier) return false;
+      if (tier.sold + quantity > tier.capacity) return false;
+      tier.sold += quantity;
+      return true;
+    },
+    async releaseSeats(tierId, quantity) {
+      const tier = tiers.get(tierId);
+      if (!tier || tier.sold < quantity) return false;
+      tier.sold -= quantity;
+      return true;
+    },
+
     // --- bookings ---
     async saveBooking(booking) {
       bookings.set(booking.id, booking);

@@ -1,14 +1,16 @@
-// Build 4: the server entry point.
+// Build 4/5: the server entry point.
 //
 //   npm start                 # PORT defaults to 3000
 //   PORT=8080 npm start       # pick a port
+//   DB_PATH=/tmp/x.db npm start
 //
 // `buildServer()` composes the pieces: a repository, the services that hold the
 // business rules, the routes that translate HTTP, and the app. It returns a
-// node:http server WITHOUT starting it, so the tests can listen on a free port.
+// node:http server WITHOUT starting it, so the tests can listen on a free port
+// and pass their own in-memory repository.
 //
-// The repository and payment gateway can be passed in, which keeps the tests
-// simple and leaves room for a real database in Build 5.
+// Build 5 swaps the default repository from memory to SQLite. The services do
+// not change because both repositories share the same async interface.
 
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -16,14 +18,14 @@ import { loadConfig } from './config.js';
 import { createRouter } from './http/router.js';
 import { registerRoutes } from './http/routes.js';
 import { createApp } from './http/app.js';
-import { createMemoryRepository } from './repositories/memory.js';
+import { createSqliteRepository } from './repositories/sqlite.js';
 import { createEventService } from './services/eventService.js';
 import { createBookingService } from './services/bookingService.js';
 import { createMockPaymentGateway } from './lib/mockPaymentGateway.js';
 
 export function buildServer({
   config = loadConfig(),
-  repository = createMemoryRepository(),
+  repository = createSqliteRepository({ path: config.dbPath }),
   paymentGateway = createMockPaymentGateway(),
 } = {}) {
   const eventService = createEventService(repository);
@@ -45,5 +47,6 @@ if (isMain) {
   const server = buildServer({ config });
   server.listen(config.port, () => {
     console.log(`Ticketing server listening on http://localhost:${config.port}`);
+    console.log(`Database: ${config.dbPath}`);
   });
 }

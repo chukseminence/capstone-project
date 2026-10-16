@@ -3,13 +3,17 @@
 // These start the REAL server (buildServer) on a free port and talk to it over
 // HTTP, so they cover routing, status codes, JSON parsing and the error shape
 // as well as the rules. Each test gets a fresh, empty server.
+//
+// Build 5: the repository is now SQLite, in memory. The services did not change
+// when the storage did, and these tests prove it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildServer } from '../src/server.js';
+import { createSqliteRepository } from '../src/repositories/sqlite.js';
 
 async function withServer(run) {
-  const server = buildServer();
+  const server = buildServer({ repository: createSqliteRepository({ path: ':memory:' }) });
   await new Promise((resolve) => server.listen(0, resolve));
   const { port } = server.address();
   try {

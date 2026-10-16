@@ -54,14 +54,22 @@ What each layer may and may not do:
 - **Domain layer (`src/domain`)** may hold the pure rules: the booking state
   machine, the inventory and capacity rules, search and sorting. It may **not**
   do any I/O, and it knows nothing about HTTP or the database.
-- **Data layer (`src/repositories`)** may read and write persistent storage
-  (SQLite in Build 5). It may **not** contain business rules; it only stores and
-  fetches. Build 4 has `memory.js`, whose async methods match what the SQLite
-  repository will offer.
+- **Data layer (`src/repositories`)** may read and write persistent storage. It
+  may **not** contain business rules; it only stores and fetches. `memory.js`
+  (Build 4) and `sqlite.js` (Build 5) expose the same async methods, so the
+  services never learn where the data lives.
 
-In Build 4 all four layers exist. The services and the repositories are new;
-`src/lib/mockPaymentGateway.js` is a small helper the booking service depends on
-instead of a real payment provider.
+From Build 5 the data lives in SQLite (`src/db/`). One rule is enforced in the
+database, not in JavaScript: seats are reserved with a single statement,
+
+```sql
+UPDATE ticket_tiers SET sold = sold + ? WHERE id = ? AND sold + ? <= capacity
+```
+
+and `CHECK (sold >= 0 AND sold <= capacity)` backstops it. Doing the check and
+the write in one statement is what stops two callers from both winning the last
+seat; a JavaScript check followed by a write has an `await` in between where the
+other caller can slip through.
 
 ## 2. The data model
 
@@ -115,7 +123,10 @@ erDiagram
 ```
 
 Money is always a whole number of the smallest unit (`priceCents`,
-`amountCents`), never a decimal.
+`amountCents`), never a decimal. In SQLite these are `INTEGER` columns,
+`bookings.reference` is `UNIQUE`, every foreign key is declared (and enforced
+with `PRAGMA foreign_keys = ON`), and `ticket_tiers.sold` carries the
+`CHECK (sold >= 0 AND sold <= capacity)` guard.
 
 ## 3. The booking life cycle
 
@@ -161,6 +172,10 @@ src/
     waitlistQueue.js
   repositories/ storage and repositories
     memory.js
+    sqlite.js
+  db/       the SQLite schema and connection
+    schema.sql
+    connection.js
   lib/      helpers with no rules of their own
     mockPaymentGateway.js
   config.js environment and defaults

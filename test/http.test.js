@@ -2,10 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request as httpRequest, createServer } from 'node:http';
 import { buildServer } from '../src/server.js';
+import { createMemoryRepository } from '../src/repositories/memory.js';
 import { createApp } from '../src/http/app.js';
 import { createRouter } from '../src/http/router.js';
 import { loadConfig } from '../src/config.js';
 import { DomainError } from '../src/domain/errors.js';
+
+// These tests only care about HTTP behaviour, so give the server a throwaway
+// in-memory repository instead of the on-disk SQLite one.
+const buildTestServer = () => buildServer({ repository: createMemoryRepository() });
 
 // A raw request so the tests control the exact path (fetch would normalise "..").
 function rawRequest(base, path, { method = 'GET', body, headers = {} } = {}) {
@@ -49,7 +54,7 @@ function testServer(configure) {
 }
 
 test('GET /health returns {"status":"ok"} over real HTTP', async () => {
-  await withServer(buildServer(), async (base) => {
+  await withServer(buildTestServer(), async (base) => {
     const res = await rawRequest(base, '/health');
     assert.equal(res.status, 200);
     assert.match(res.headers['content-type'], /application\/json/);
@@ -58,7 +63,7 @@ test('GET /health returns {"status":"ok"} over real HTTP', async () => {
 });
 
 test('an unknown /api path returns a JSON 404 in the shared error shape', async () => {
-  await withServer(buildServer(), async (base) => {
+  await withServer(buildTestServer(), async (base) => {
     const res = await rawRequest(base, '/api/does-not-exist');
     assert.equal(res.status, 404);
     assert.equal(res.json.error.code, 'NOT_FOUND');
@@ -117,7 +122,7 @@ test('an unexpected error becomes a generic 500 with no details', async () => {
 });
 
 test('serves a static file from public/', async () => {
-  await withServer(buildServer(), async (base) => {
+  await withServer(buildTestServer(), async (base) => {
     const res = await rawRequest(base, '/styles.css');
     assert.equal(res.status, 200);
     assert.match(res.headers['content-type'], /text\/css/);
@@ -126,7 +131,7 @@ test('serves a static file from public/', async () => {
 });
 
 test('the root path serves public/index.html', async () => {
-  await withServer(buildServer(), async (base) => {
+  await withServer(buildTestServer(), async (base) => {
     const res = await rawRequest(base, '/');
     assert.equal(res.status, 200);
     assert.match(res.headers['content-type'], /text\/html/);
@@ -135,7 +140,7 @@ test('the root path serves public/index.html', async () => {
 });
 
 test('a path may not escape public/', async () => {
-  await withServer(buildServer(), async (base) => {
+  await withServer(buildTestServer(), async (base) => {
     // %2f is an encoded slash the URL parser leaves alone, so ".." survives to
     // reach the guard in serveStatic and must be refused.
     const res = await rawRequest(base, '/..%2fpackage.json');
@@ -145,7 +150,7 @@ test('a path may not escape public/', async () => {
 });
 
 test('a plain ../ traversal is neutralised by the URL parser (never serves the file)', async () => {
-  await withServer(buildServer(), async (base) => {
+  await withServer(buildTestServer(), async (base) => {
     const res = await rawRequest(base, '/../package.json');
     assert.notEqual(res.status, 200);
     assert.equal(res.text.includes('"name": "ticketing-capstone"'), false);
@@ -153,7 +158,7 @@ test('a plain ../ traversal is neutralised by the URL parser (never serves the f
 });
 
 test('a missing static file returns a JSON 404', async () => {
-  await withServer(buildServer(), async (base) => {
+  await withServer(buildTestServer(), async (base) => {
     const res = await rawRequest(base, '/no-such-file.txt');
     assert.equal(res.status, 404);
     assert.equal(res.json.error.code, 'NOT_FOUND');
