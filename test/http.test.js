@@ -123,7 +123,7 @@ test('an unexpected error becomes a generic 500 with no details', async () => {
 
 test('serves a static file from public/', async () => {
   await withServer(buildTestServer(), async (base) => {
-    const res = await rawRequest(base, '/styles.css');
+    const res = await rawRequest(base, '/css/styles.css');
     assert.equal(res.status, 200);
     assert.match(res.headers['content-type'], /text\/css/);
     assert.ok(res.text.length > 0);

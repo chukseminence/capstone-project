@@ -180,5 +180,33 @@ src/
     mockPaymentGateway.js
   config.js environment and defaults
   server.js the entry point
-public/     static files served by app.js
+public/     the browser app: static files served by app.js
+  index.html  browse events (search, city, max price, sort)
+  event.html  one event, its tiers and checkout
+  css/
+    styles.css
+  js/         ES modules, no framework, no build step
+    ui.js       tiny el()/format helpers (textContent only, never innerHTML)
+    mockData.js fake events and tiers
+    api.js      the ONE data access point the pages import
+    pages/
+      home.js
+      event.js
 ```
+
+## 5. The browser app (Build 6)
+
+The screens run in the browser as plain ES modules and, for now, on fake data.
+The rule that keeps Build 7 cheap: **the pages never call `fetch`.** They import
+from `public/js/api.js`, whose functions resolve to the same shapes the real API
+returns in `docs/api-examples.md`. Swapping the body of those functions for
+`fetch` calls changes nothing on the pages.
+
+- `public/js/api.js` also holds a copy of the search/filter/sort rules from
+  `src/domain/eventSearch.js`, because the browser can only import from
+  `public/`, not from `src/`. If those rules change, change both.
+- A sold-out tier (`seatsLeft === 0`) is marked and its button is disabled.
+- A quantity is clamped to at most 10 and at most the seats left
+  (`clampQuantity` in `public/js/ui.js`).
+- Checkout shows a countdown while the seats are held; a declined card shows an
+  error and leaves the Pay button enabled to retry.

@@ -3,30 +3,68 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Event Ticketing - Build 3</title>
-  <link rel="stylesheet" href="/styles.css">
+  <title>Event Ticketing - find your next event</title>
+  <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
-  <main>
-    <h1>Event Ticketing and Booking</h1>
-    <p class="lede">Build 3: architecture, booking state machine and the server skeleton.</p>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="/">Event Ticketing</a>
+      <span class="tagline">Browse, filter and book tickets</span>
+    </div>
+  </header>
 
-    <section class="card">
-      <h2>Server health</h2>
-      <p>The button asks <code>GET /health</code> and shows what comes back.</p>
-      <button id="ping" type="button">Check /health</button>
-      <pre id="health" aria-live="polite">Not checked yet.</pre>
+  <main class="wrap">
+    <section class="card" aria-labelledby="find-heading">
+      <h1 id="find-heading">Find an event</h1>
+
+      <form id="filters" class="filters">
+        <div class="field">
+          <label for="q">Search</label>
+          <input id="q" name="q" type="search" placeholder="Title or venue">
+        </div>
+
+        <div class="field">
+          <label for="city">City</label>
+          <select id="city" name="city">
+            <option value="">All cities</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="maxPrice">Max price (₦)</label>
+          <input id="maxPrice" name="maxPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="Any">
+        </div>
+
+        <div class="field">
+          <label for="sortBy">Sort by</label>
+          <select id="sortBy" name="sortBy">
+            <option value="date">Date (soonest)</option>
+            <option value="price">Price (cheapest)</option>
+            <option value="availability">Availability</option>
+          </select>
+        </div>
+
+        <div class="field field-check">
+          <input id="onlyAvailable" name="onlyAvailable" type="checkbox">
+          <label for="onlyAvailable">Only events with seats</label>
+        </div>
+
+        <div class="field field-submit">
+          <button type="submit">Search</button>
+        </div>
+      </form>
     </section>
 
-    <section class="card">
-      <h2>What works today</h2>
-      <ul>
-        <li>This page is served as a static file from <code>public/</code>.</li>
-        <li><code>GET /health</code> returns <code>{"status":"ok"}</code>.</li>
-        <li>Unknown <code>/api</code> paths return a JSON 404.</li>
-      </ul>
-    </section>
+    <p id="results-status" class="status" aria-live="polite"></p>
+
+    <section id="results" class="results" aria-label="Events"></section>
   </main>
-  <script type="module" src="/app.js"></script>
+
+  <footer class="wrap footer">
+    <p class="meta">Build 6: the screens, running on mock data.</p>
+  </footer>
+
+  <script type="module" src="/js/pages/home.js"></script>
 </body>
 </html>
