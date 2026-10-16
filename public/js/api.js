@@ -1,15 +1,18 @@
 // ============================================================================
 // THE ONE DATA FILE.
 // Every page of the website gets its data from THIS file and nowhere else.
-// Right now it answers from fake (mock) data kept in memory.
-// In Build 7 only the inside of these functions changes: they will call the real
-// server with fetch("/api/..."). The pages stay exactly the same.
+// In Build 6 this file held fake data. In Build 7 the same function names now talk to the
+// REAL server with fetch("/api/..."). The pages did not have to change to get real data.
 //
-// The answers have the SAME SHAPE as the real REST API from Build 4/5:
-//   event:   { id, title, city, venue, date, status, tiers: [{ id, name, priceCents, capacity, seatsLeft }] }
-//   booking: { ref, eventId, tierId, buyerName, quantity, totalCents, status }
-//   error:   throws ApiError with .code and .status (like { error: { code, message } })
-// Money is whole cents (kobo).
+// What lives here:
+//   - every call to the server (fetch)
+//   - the login "session": who is logged in and their token (kept in sessionStorage,
+//     so it is gone when the browser tab is closed)
+//   - turning a card number into a payment "token" (the server never sees card numbers)
+//
+// Errors: every failed call throws ApiError with .code and .status, the same shape the
+// server sends: { "error": { "code", "message" } }. If the server cannot be reached at all,
+// the code is "NETWORK".
 // ============================================================================
 
 export const MAX_PER_BOOKING = 10; // same limit as the server
@@ -17,7 +20,7 @@ export const DECLINED_TEST_CARD = "4000000000000002";
 export const SUCCESS_TEST_CARD = "4242424242424242";
 
 export class ApiError extends Error {
-  constructor(code, message, status) {
+  constructor(code, message, status = 0) {
     super(message);
     this.name = "ApiError";
     this.code = code;
@@ -25,171 +28,174 @@ export class ApiError extends Error {
   }
 }
 
-const STATUS = {
-  VALIDATION: 400,
-  PAYMENT_DECLINED: 402,
-  NOT_FOUND: 404,
-  SOLD_OUT: 409,
-  INVALID_STATE: 409,
-};
-function fail(code, message) {
-  return new ApiError(code, message, STATUS[code] ?? 500);
+// ----------------------------------------------------------------- settings
+// Tests change these. The website itself never does: it uses the same address it was loaded from.
+let baseUrl = "";
+let storage = null;
+const memory = new Map(); // used when the browser gives us no sessionStorage
+
+try {
+  storage = globalThis.sessionStorage ?? null;
+} catch {
+  storage = null; // some privacy modes throw just for looking at it
 }
 
-// ---------------------------------------------------------------- fake data
-function tier(id, name, priceCents, capacity, sold) {
-  return { id, name, priceCents, capacity, sold };
+export function configureApi(change = {}) {
+  if ("baseUrl" in change) baseUrl = change.baseUrl;
+  if ("storage" in change) storage = change.storage;
 }
 
-function seedEvents() {
-  return [
-    { id: "EV-000001", title: "Lagos Jazz Nights", city: "Lagos", venue: "Terra Hall, Victoria Island", date: "2026-11-07", status: "published",
-      tiers: [tier("T1", "General", 800000, 200, 57), tier("T2", "VIP table", 2500000, 40, 28)] },
-    { id: "EV-000002", title: "Abuja Tech Summit 2026", city: "Abuja", venue: "Capital Conference Hall", date: "2026-11-12", status: "published",
-      tiers: [tier("T1", "Student", 500000, 150, 150), tier("T2", "Standard", 1800000, 400, 211), tier("T3", "Workshop pass", 4500000, 60, 49)] },
-    { id: "EV-000003", title: "Kano Heritage Durbar Walk", city: "Kano", venue: "Emir's Palace Square", date: "2026-11-14", status: "published",
-      tiers: [tier("T1", "Walk-in", 200000, 500, 120)] },
-    { id: "EV-000004", title: "Ibadan Stand-up Night", city: "Ibadan", venue: "Cultural Centre Mokola", date: "2026-11-21", status: "published",
-      tiers: [tier("T1", "Regular", 300000, 120, 120), tier("T2", "Front row", 1000000, 24, 18)] },
-    { id: "EV-000005", title: "Port Harcourt Food Festival", city: "Port Harcourt", venue: "Garden City Grounds", date: "2026-12-05", status: "published",
-      tiers: [tier("T1", "Free entry", 0, 1000, 640), tier("T2", "Tasting pass", 1500000, 150, 90)] },
-    { id: "EV-000006", title: "Enugu Gospel Concert", city: "Enugu", venue: "Coal City Arena", date: "2026-12-12", status: "published",
-      tiers: [tier("T1", "Regular", 500000, 800, 355), tier("T2", "Gold", 2000000, 100, 94)] },
-    { id: "EV-000007", title: "Lagos Comedy Cruise", city: "Lagos", venue: "Marina Jetty, Lagos Island", date: "2026-12-19", status: "published",
-      tiers: [tier("T1", "Deck", 1200000, 90, 31), tier("T2", "Captain's table", 3500000, 16, 3)] },
-    { id: "EV-000008", title: "Detty December Beach Party", city: "Lagos", venue: "Landmark Beach, Oniru", date: "2026-12-26", status: "published",
-      tiers: [tier("T1", "Early bird", 1000000, 300, 300), tier("T2", "Regular", 1500000, 500, 500)] },
-  ];
-}
+// ------------------------------------------------------------------ session
+const SESSION_KEY = "stub.session";
+const listeners = new Set();
 
-// ------------------------------------------------------------------ settings
-// Tests (and the demo link ?hold=20) can change these. Real life never calls configureMock.
-let settings = { latencyMs: 120, holdSeconds: 600, now: () => Date.now() };
-let events = seedEvents();
-let bookings = new Map();
-let bookingCounter = 0;
-
-export function configureMock(change = {}) {
-  settings = { ...settings, ...change };
-}
-export function resetMock() {
-  events = seedEvents();
-  bookings = new Map();
-  bookingCounter = 0;
-}
-
-async function pause() {
-  if (settings.latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, settings.latencyMs));
-}
-
-// ------------------------------------------------------------------- helpers
-function eventView(event) {
-  return {
-    id: event.id, title: event.title, city: event.city, venue: event.venue, date: event.date, status: event.status,
-    tiers: event.tiers.map((t) => ({ id: t.id, name: t.name, priceCents: t.priceCents, capacity: t.capacity, seatsLeft: t.capacity - t.sold })),
-  };
-}
-function bookingView(b) {
-  return { ref: b.ref, eventId: b.eventId, tierId: b.tierId, buyerName: b.buyerName, quantity: b.quantity,
-    totalCents: b.totalCents, status: b.status, holdExpiresAt: b.holdExpiresAt };
-}
-const lowestPrice = (e) => Math.min(...e.tiers.map((t) => t.priceCents));
-const seatsLeftTotal = (e) => e.tiers.reduce((sum, t) => sum + (t.capacity - t.sold), 0);
-
-function releaseSeats(booking) {
-  const event = events.find((e) => e.id === booking.eventId);
-  const t = event?.tiers.find((x) => x.id === booking.tierId);
-  if (t) t.sold -= booking.quantity;
-}
-
-// A pending booking whose hold ran out becomes "expired" and gives its seats back.
-function expireIfLate(booking) {
-  if (booking.status === "pending" && settings.now() >= Date.parse(booking.holdExpiresAt)) {
-    booking.status = "expired";
-    releaseSeats(booking);
+function readSession() {
+  let raw = null;
+  try {
+    raw = storage ? storage.getItem(SESSION_KEY) : (memory.get(SESSION_KEY) ?? null);
+  } catch {
+    raw = memory.get(SESSION_KEY) ?? null;
+  }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed?.token === "string" && parsed.user ? parsed : null;
+  } catch {
+    return null;
   }
 }
 
-const SORT_KEYS = { date: (e) => e.date, price: lowestPrice, availability: seatsLeftTotal };
-
-// ---------------------------------------------------------------- the calls
-// GET /api/events
-export async function listEvents(query = {}) {
-  await pause();
-  const allowed = ["q", "city", "dateFrom", "dateTo", "minPriceCents", "maxPriceCents", "sort", "order"];
-  for (const key of Object.keys(query)) {
-    if (!allowed.includes(key)) throw fail("VALIDATION", `Unknown filter: ${key}.`);
+function writeSession(session) {
+  const text = session ? JSON.stringify(session) : null;
+  try {
+    if (storage) {
+      if (text) storage.setItem(SESSION_KEY, text);
+      else storage.removeItem(SESSION_KEY);
+    } else if (text) memory.set(SESSION_KEY, text);
+    else memory.delete(SESSION_KEY);
+  } catch {
+    if (text) memory.set(SESSION_KEY, text);
+    else memory.delete(SESSION_KEY);
   }
-  const { q, city, dateFrom, dateTo, minPriceCents, maxPriceCents, sort, order } = query;
-  if (dateFrom && dateTo && dateFrom > dateTo) throw fail("VALIDATION", "dateFrom cannot be after dateTo.");
-  if (sort != null && !(sort in SORT_KEYS)) throw fail("VALIDATION", "sort must be date, price or availability.");
-  if (order != null && sort == null) throw fail("VALIDATION", "order needs sort.");
-  if (order != null && order !== "asc" && order !== "desc") throw fail("VALIDATION", "order must be asc or desc.");
+  for (const listener of listeners) listener(session?.user ?? null);
+}
 
-  const needle = (q ?? "").trim().toLowerCase();
-  const wantedCity = (city ?? "").trim().toLowerCase();
-  let found = events.filter((e) => {
-    if (e.status !== "published") return false;
-    if (needle && !`${e.title} ${e.city} ${e.venue}`.toLowerCase().includes(needle)) return false;
-    if (wantedCity && e.city.toLowerCase() !== wantedCity) return false;
-    if (dateFrom && e.date < dateFrom) return false;
-    if (dateTo && e.date > dateTo) return false;
-    if (minPriceCents != null && lowestPrice(e) < minPriceCents) return false;
-    if (maxPriceCents != null && lowestPrice(e) > maxPriceCents) return false;
-    return true;
-  });
-  if (sort) {
-    const key = SORT_KEYS[sort];
-    const direction = order === "desc" ? -1 : 1;
-    // Array.sort is stable, so events that tie keep their order.
-    found = found.slice().sort((a, b) => (key(a) < key(b) ? -direction : key(a) > key(b) ? direction : 0));
+// Who is logged in right now? { id, name, email, role } or null.
+export function currentUser() {
+  return readSession()?.user ?? null;
+}
+
+// Call fn(user) whenever someone logs in or out. Returns a function that stops listening.
+export function onSessionChange(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+export function logout() {
+  writeSession(null);
+}
+
+// -------------------------------------------------------------- the one fetch
+async function request(method, path, { body, query } = {}) {
+  const session = readSession();
+  const headers = { Accept: "application/json" };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (session) headers.Authorization = `Bearer ${session.token}`;
+
+  let url = baseUrl + path;
+  if (query) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== null) params.set(key, String(value));
+    if ([...params].length > 0) url += "?" + params;
   }
-  return { events: found.map(eventView) };
+
+  let response;
+  try {
+    response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch {
+    throw new ApiError("NETWORK", "Cannot reach the server. Check your connection and try again.");
+  }
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    /* the server sent something that is not JSON */
+  }
+
+  if (!response.ok) {
+    const problem = data?.error;
+    // Our login stopped working (expired, or the server restarted): forget it, so the pages show "Log in".
+    if (response.status === 401 && session && !path.startsWith("/api/auth/")) writeSession(null);
+    throw new ApiError(problem?.code ?? "SERVER", problem?.message ?? "The server sent an answer we did not understand.", response.status);
+  }
+  if (data === null) throw new ApiError("SERVER", "The server sent an answer we did not understand.", response.status);
+  return data;
+}
+
+// --------------------------------------------------------------------- login
+// POST /api/auth/signup   role is "attendee" or "organizer"
+export async function signup({ name, email, password, role }) {
+  const { user, token } = await request("POST", "/api/auth/signup", { body: { name, email, password, role } });
+  writeSession({ user, token });
+  return user;
+}
+
+// POST /api/auth/login
+export async function login({ email, password }) {
+  const { user, token } = await request("POST", "/api/auth/login", { body: { email, password } });
+  writeSession({ user, token });
+  return user;
+}
+
+// -------------------------------------------------------------------- events
+// GET /api/events   (query: q, city, dateFrom, dateTo, minPriceCents, maxPriceCents, sort, order)
+export function listEvents(query = {}) {
+  return request("GET", "/api/events", { query });
 }
 
 // GET /api/events/:eventId
-export async function getEvent(eventId) {
-  await pause();
-  const event = events.find((e) => e.id === eventId);
-  if (!event) throw fail("NOT_FOUND", "We cannot find that event.");
-  return { event: eventView(event) };
+export function getEvent(eventId) {
+  return request("GET", `/api/events/${encodeURIComponent(eventId)}`);
 }
 
-// POST /api/bookings
-export async function createBooking({ eventId, tierId, buyerName, quantity }) {
-  await pause();
-  const event = events.find((e) => e.id === eventId && e.status === "published");
-  if (!event) throw fail("NOT_FOUND", "We cannot find that event.");
-  const t = event.tiers.find((x) => x.id === tierId);
-  if (!t) throw fail("NOT_FOUND", "We cannot find that ticket type.");
-  if (typeof buyerName !== "string" || buyerName.trim() === "") throw fail("VALIDATION", "Enter the name for the booking.");
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_PER_BOOKING) {
-    throw fail("VALIDATION", `Choose between 1 and ${MAX_PER_BOOKING} tickets.`);
-  }
-  const left = t.capacity - t.sold;
-  if (quantity > left) {
-    throw fail("SOLD_OUT", left === 0 ? `${t.name} is sold out.` : `Only ${left} ${t.name} ${left === 1 ? "ticket is" : "tickets are"} left.`);
-  }
-  t.sold += quantity;
-  bookingCounter += 1;
-  const booking = {
-    ref: `BK-${String(bookingCounter).padStart(6, "0")}`,
-    eventId, tierId, buyerName: buyerName.trim(), quantity,
-    totalCents: t.priceCents * quantity,
-    status: "pending",
-    holdExpiresAt: new Date(settings.now() + settings.holdSeconds * 1000).toISOString(),
-  };
-  bookings.set(booking.ref, booking);
-  return { booking: bookingView(booking) };
+// GET /api/me/events   (organizers: my events, drafts too)
+export function listMyEvents() {
+  return request("GET", "/api/me/events");
 }
 
-// GET /api/bookings/:ref
-export async function getBooking(ref) {
-  await pause();
-  const booking = bookings.get(ref);
-  if (!booking) throw fail("NOT_FOUND", "We cannot find that booking.");
-  expireIfLate(booking);
-  return { booking: bookingView(booking) };
+// POST /api/events   (organizers)
+export function createEvent({ title, city, venue, date }) {
+  return request("POST", "/api/events", { body: { title, city, venue, date } });
+}
+
+// POST /api/events/:eventId/tiers   (the owner)
+export function addTier(eventId, { name, priceCents, capacity }) {
+  return request("POST", `/api/events/${encodeURIComponent(eventId)}/tiers`, { body: { name, priceCents, capacity } });
+}
+
+// POST /api/events/:eventId/publish and /unpublish   (the owner)
+export function publishEvent(eventId) {
+  return request("POST", `/api/events/${encodeURIComponent(eventId)}/publish`);
+}
+export function unpublishEvent(eventId) {
+  return request("POST", `/api/events/${encodeURIComponent(eventId)}/unpublish`);
+}
+
+// ------------------------------------------------------------------ bookings
+// POST /api/bookings   (attendees)
+export function createBooking({ eventId, tierId, buyerName, quantity }) {
+  return request("POST", "/api/bookings", { body: { eventId, tierId, buyerName, quantity } });
+}
+
+// GET /api/bookings/:ref   (only your own)
+export function getBooking(ref) {
+  return request("GET", `/api/bookings/${encodeURIComponent(ref)}`);
+}
+
+// GET /api/me/bookings   (my tickets, newest first)
+export function listMyBookings() {
+  return request("GET", "/api/me/bookings");
 }
 
 // The website never sends card numbers to the server. It turns the card into a "token" first.
@@ -199,32 +205,12 @@ function cardToToken(cardNumber) {
   return String(cardNumber).replace(/\D/g, "") === DECLINED_TEST_CARD ? "tok_declined" : "tok_success";
 }
 
-// POST /api/bookings/:ref/pay   (the server call only ever receives { paymentToken })
-export async function payBooking(ref, { cardNumber }) {
-  await pause();
-  const booking = bookings.get(ref);
-  if (!booking) throw fail("NOT_FOUND", "We cannot find that booking.");
-  expireIfLate(booking);
-  if (booking.status !== "pending") {
-    throw fail("INVALID_STATE", booking.status === "expired" ? "This booking ran out of time. Your seats were released." : `This booking is already ${booking.status}.`);
-  }
-  if (cardToToken(cardNumber) === "tok_declined") {
-    throw fail("PAYMENT_DECLINED", "The card was declined.");
-  }
-  booking.status = "paid";
-  return { booking: bookingView(booking) };
+// POST /api/bookings/:ref/pay   (the server only ever receives { paymentToken })
+export function payBooking(ref, { cardNumber }) {
+  return request("POST", `/api/bookings/${encodeURIComponent(ref)}/pay`, { body: { paymentToken: cardToToken(cardNumber) } });
 }
 
 // POST /api/bookings/:ref/cancel   (unpaid bookings only)
-export async function cancelBooking(ref) {
-  await pause();
-  const booking = bookings.get(ref);
-  if (!booking) throw fail("NOT_FOUND", "We cannot find that booking.");
-  expireIfLate(booking);
-  if (booking.status === "paid") throw fail("INVALID_STATE", "A paid booking needs a refund.");
-  if (booking.status === "pending") {
-    booking.status = "cancelled";
-    releaseSeats(booking);
-  }
-  return { booking: bookingView(booking) };
+export function cancelBooking(ref) {
+  return request("POST", `/api/bookings/${encodeURIComponent(ref)}/cancel`);
 }

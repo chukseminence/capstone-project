@@ -1,5 +1,7 @@
 // S07: check out. A countdown shows how long the seats are held, then a mock card form.
 import { getBooking, getEvent, payBooking, cancelBooking, ApiError, SUCCESS_TEST_CARD, DECLINED_TEST_CARD } from "../api.js";
+
+const FALLBACK_HOLD_MS = 10 * 60 * 1000;
 import { h, uniqueId } from "../dom.js";
 import { formatMoney, describeDate } from "../money.js";
 import { secondsLeft, formatClock, milestoneMessage } from "../countdown.js";
@@ -16,7 +18,8 @@ export async function checkoutView({ ref, announce }) {
   const { event } = await getEvent(booking.eventId);
   const tier = event.tiers.find((t) => t.id === booking.tierId);
   const date = describeDate(event.date);
-  const expiresAt = Date.parse(booking.holdExpiresAt);
+  const parsed = Date.parse(booking.holdExpiresAt);
+  const expiresAt = Number.isFinite(parsed) ? parsed : Date.now() + FALLBACK_HOLD_MS;
 
   const summary = h("section", { class: "summary", "aria-labelledby": "summary-title" },
     h("h2", { id: "summary-title", text: "Your order" }),
@@ -137,6 +140,8 @@ export async function checkoutView({ ref, announce }) {
   let expired = false;
   function lockForm() {
     expired = true;
+    // Until the server releases late bookings by itself, we ask it to, so the seats really go back on sale.
+    cancelBooking(ref).catch(() => {});
     for (const el of form.elements) el.disabled = true;
     cancel.hidden = true;
     form.hidden = true;

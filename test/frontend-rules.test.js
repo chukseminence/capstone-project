@@ -129,6 +129,21 @@ describe("website rules: the server serves the website correctly", () => {
       assert.equal(res.headers.get("x-content-type-options"), "nosniff");
     }
   });
+  test("pages come with a Content-Security-Policy that allows only this site's own scripts and styles", async () => {
+    const res = await fetch(`${base}/`);
+    const csp = res.headers.get("content-security-policy");
+    assert.match(csp, /default-src 'self'/);
+    assert.match(csp, /script-src 'self'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+    assert.ok(!/unsafe-inline|unsafe-eval|\*/.test(csp), "the policy must not be loosened");
+    assert.equal(res.headers.get("x-frame-options"), "DENY");
+  });
+  test("index.html has no inline script or style, so that policy can stay strict", () => {
+    const html = fs.readFileSync(path.join(publicDir, "index.html"), "utf8");
+    assert.ok(!/<script(?![^>]*\bsrc=)/i.test(html), "inline <script>");
+    assert.ok(!/<style[\s>]/i.test(html), "inline <style>");
+    assert.ok(!/\son\w+\s*=/i.test(html), "inline event handler");
+  });
   test("/ shows the website", async () => {
     const res = await fetch(`${base}/`);
     assert.match(await res.text(), /id="main"/);

@@ -32,7 +32,17 @@ try {
   process.exit(1);
 }
 
-const server = createServer({ publicDir, store });
+// The secret key that signs login tokens. NEVER write it in the code or commit it to Git.
+// Set it yourself (TOKEN_SECRET, at least 16 characters) to keep logins working across restarts.
+// If you do not, a random one is made each time, and everybody has to log in again after a restart.
+const tokenSecret = process.env.TOKEN_SECRET || undefined;
+if (tokenSecret !== undefined && tokenSecret.length < 16) {
+  console.error("TOKEN_SECRET must be at least 16 characters long.");
+  store.close();
+  process.exit(1);
+}
+
+const server = createServer({ publicDir, store, tokenSecret });
 
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {
@@ -49,6 +59,7 @@ server.listen(port, () => {
   console.log(`  Website:  http://localhost:${port}/`);
   console.log(`  Health:   http://localhost:${port}/health`);
   console.log(`  Database: ${dbFile === ":memory:" ? "in memory (lost when you stop)" : path.resolve(dbFile)}`);
+  console.log(`  Logins:   ${tokenSecret ? "signed with your TOKEN_SECRET" : "signed with a random key (everyone logs in again after a restart)"}`);
   console.log(`Press Ctrl + C to stop.`);
 });
 

@@ -18,11 +18,25 @@ export function defineApiTests(label, makeStore) {
     let store;
     let base;
 
+    // Since Build 7 most calls need a login. Every test starts with one organizer and one attendee,
+    // made through the real signup call, and `call` sends the right token by itself (see `as` below).
+    let tokens;
+
     beforeEach(async () => {
       store = makeStore();
-      server = createServer({ publicDir, store });
+      // A cheap password hash keeps the tests fast. (Real servers use the strong default.)
+      server = createServer({ publicDir, store, hashCost: { N: 1024, r: 8, p: 1 } });
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       base = `http://127.0.0.1:${server.address().port}`;
+      tokens = {};
+      for (const [who, role] of [["org", "organizer"], ["att", "attendee"]]) {
+        const res = await fetch(base + "/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: `Test ${role}`, email: `${role}@example.com`, password: "correct horse battery", role }),
+        });
+        tokens[who] = (await res.json()).token;
+      }
     });
 
     afterEach(async () => {
@@ -33,8 +47,13 @@ export function defineApiTests(label, makeStore) {
 
 
     // One call to the API. `body` objects are sent as JSON. `raw` is sent exactly as written.
-    async function call(method, url, { body, raw, type = "application/json" } = {}) {
+    // `as`: who is asking. "org" = the organizer, "att" = the attendee, "anon" = nobody logged in.
+    // The default picks the person the old (pre-login) tests meant: attendee for bookings, organizer otherwise.
+    async function call(method, url, { body, raw, type = "application/json", as, token } = {}) {
       const init = { method, headers: {} };
+      const who = as ?? (url.startsWith("/api/bookings") ? "att" : url.startsWith("/api/auth") ? "anon" : url === "/api/events" && method === "GET" ? "anon" : "org");
+      if (token !== undefined) init.headers.Authorization = `Bearer ${token}`;
+      else if (who !== "anon") init.headers.Authorization = `Bearer ${tokens[who]}`;
       if (body !== undefined) {
         init.body = JSON.stringify(body);
         init.headers["Content-Type"] = type;
@@ -236,7 +255,8 @@ export function defineApiTests(label, makeStore) {
         const res = await call("POST", "/api/bookings", { body: { eventId, tierId, buyerName: "Ada", quantity: 2 } });
         assert.equal(res.status, 201);
         assert.equal(res.headers.get("location"), "/api/bookings/BK-000001");
-        assert.deepEqual(res.json.booking, {
+        const { holdExpiresAt, ...rest } = res.json.booking;
+        assert.deepEqual(rest, {
           ref: "BK-000001",
           eventId,
           tierId,
@@ -245,6 +265,9 @@ export function defineApiTests(label, makeStore) {
           totalCents: 1000000,
           status: "pending",
         });
+        // The hold deadline is about 10 minutes from now (Build 8 makes the server enforce it).
+        const minutes = (Date.parse(holdExpiresAt) - Date.now()) / 60000;
+        assert.ok(minutes > 9.5 && minutes <= 10.01, `hold should be 10 minutes, got ${minutes}`);
         const event = await call("GET", `/api/events/${eventId}`);
         assert.equal(event.json.event.tiers[0].seatsLeft, 1);
       });

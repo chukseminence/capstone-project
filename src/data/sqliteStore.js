@@ -16,9 +16,10 @@ import { MAX_PRICE_CENTS, MAX_CAPACITY } from "../events.js";
 //      It runs inside a transaction, so two buyers can never both get the last seat.
 //      (docs/overselling.md explains the bug this prevents.)
 
-const SCHEMA_VERSION = 1;
+// Schema history:  v1 = Build 5 (events, tiers, bookings, waitlist).  v2 = Build 7 (users, owners).
+const SCHEMA_VERSION = 2;
 
-const SCHEMA = `
+export const SCHEMA_V1 = `
 CREATE TABLE events (
   id     TEXT PRIMARY KEY,
   title  TEXT NOT NULL,
@@ -65,6 +66,25 @@ CREATE TABLE counters (
 INSERT INTO counters (name, value) VALUES ('event', 0), ('booking', 0);
 `;
 
+// A MIGRATION moves an existing database file from one version to the next WITHOUT losing data.
+// Old rows get NULL for the new columns: an old event has no owner, so nobody can edit it,
+// and an old booking has no user, so nobody can read it. Failing closed is the safe choice.
+const MIGRATIONS = {
+  2: `
+CREATE TABLE users (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  email         TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL CHECK (role IN ('attendee', 'organizer', 'staff'))
+);
+ALTER TABLE events   ADD COLUMN owner_id TEXT REFERENCES users(id);
+ALTER TABLE bookings ADD COLUMN user_id TEXT REFERENCES users(id);
+ALTER TABLE bookings ADD COLUMN hold_expires_at TEXT;
+INSERT INTO counters (name, value) VALUES ('user', 0);
+`,
+};
+
 // Open (or create) the database and make sure the tables exist.
 function openDatabase(file, busyTimeoutMs) {
   const db = new DatabaseSync(file);
@@ -82,15 +102,17 @@ function openDatabase(file, busyTimeoutMs) {
         `This version understands schema ${SCHEMA_VERSION}.`
     );
   }
-  if (version === 0) {
+  if (version < SCHEMA_VERSION) {
     db.exec("BEGIN IMMEDIATE");
     try {
-      // Another process may have created the tables while we waited for the lock.
-      const again = db.prepare("PRAGMA user_version").get().user_version;
-      if (again === 0) {
-        db.exec(SCHEMA);
-        db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      // Another process may have upgraded the file while we waited for the lock, so look again.
+      let current = db.prepare("PRAGMA user_version").get().user_version;
+      if (current === 0) {
+        db.exec(SCHEMA_V1);
+        current = 1;
       }
+      for (let next = current + 1; next <= SCHEMA_VERSION; next++) db.exec(MIGRATIONS[next]);
+      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");
@@ -114,6 +136,8 @@ function bookingFromRow(row) {
     quantity: row.quantity,
     totalCents: row.total_cents,
     status: row.status,
+    userId: row.user_id ?? null,
+    holdExpiresAt: row.hold_expires_at ?? null,
   };
 }
 
@@ -155,7 +179,7 @@ export function createSqliteStore(file = ":memory:", { busyTimeoutMs = 5000 } = 
   function buildEvents(eventRows, tierRows, waitRows) {
     const events = new Map();
     for (const r of eventRows) {
-      events.set(r.id, { id: r.id, title: r.title, city: r.city, venue: r.venue, date: r.date, status: r.status, tiers: new Map() });
+      events.set(r.id, { id: r.id, title: r.title, city: r.city, venue: r.venue, date: r.date, status: r.status, ownerId: r.owner_id ?? null, tiers: new Map() });
     }
     const tiers = new Map();
     for (const r of tierRows) {
@@ -199,11 +223,12 @@ export function createSqliteStore(file = ":memory:", { busyTimeoutMs = 5000 } = 
   // (If it did, an old copy of an event could wipe out bookings made a moment ago.)
   function persist(event) {
     db.prepare(
-      `INSERT INTO events (id, title, city, venue, date, status) VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO events (id, title, city, venue, date, status, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title, city = excluded.city, venue = excluded.venue,
          date = excluded.date, status = excluded.status`
-    ).run(event.id, event.title, event.city, event.venue, event.date, event.status);
+    ).run(event.id, event.title, event.city, event.venue, event.date, event.status, event.ownerId ?? null);
+    // (owner_id is written only when the event is first created. It can never be changed later.)
     const addTier = db.prepare(
       `INSERT INTO tiers (event_id, id, name, price_cents, capacity, sold) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(event_id, id) DO NOTHING`
@@ -226,7 +251,7 @@ export function createSqliteStore(file = ":memory:", { busyTimeoutMs = 5000 } = 
 
     // S06 + S08. The `event` you pass in is only used for its id.
     // It may be out of date, so every real decision is made again inside the transaction.
-    book(event, tierId, buyerName, quantity = 1) {
+    book(event, tierId, buyerName, quantity = 1, { userId = null, holdExpiresAt = null } = {}) {
       checkBookingRequest(buyerName, quantity);
       return inTransaction(() => {
         const current = db.prepare("SELECT status FROM events WHERE id = ?").get(event.id);
@@ -254,11 +279,17 @@ export function createSqliteStore(file = ":memory:", { busyTimeoutMs = 5000 } = 
         const ref = "BK-" + String(nextCount("booking")).padStart(6, "0");
         const totalCents = tier.price_cents * quantity;
         db.prepare(
-          `INSERT INTO bookings (ref, event_id, tier_id, buyer_name, quantity, total_cents, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        ).run(ref, event.id, tierId, buyerName, quantity, totalCents, INITIAL_STATE);
-        return { ref, eventId: event.id, tierId, buyerName, quantity, totalCents, status: INITIAL_STATE };
+          `INSERT INTO bookings (ref, event_id, tier_id, buyer_name, quantity, total_cents, status, user_id, hold_expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(ref, event.id, tierId, buyerName, quantity, totalCents, INITIAL_STATE, userId, holdExpiresAt);
+        return { ref, eventId: event.id, tierId, buyerName, quantity, totalCents, status: INITIAL_STATE, userId, holdExpiresAt };
       });
+    },
+
+    // S13: the bookings of ONE user, newest first. The user id goes in through a "?" like everything else.
+    listForUser(userId) {
+      if (typeof userId !== "string") return [];
+      return db.prepare("SELECT * FROM bookings WHERE user_id = ? ORDER BY rowid DESC").all(userId).map(bookingFromRow);
     },
 
     // pending -> paid. The state machine decides if that is allowed.
@@ -316,8 +347,32 @@ export function createSqliteStore(file = ":memory:", { busyTimeoutMs = 5000 } = 
     },
   };
 
+  // S01: accounts. The UNIQUE constraint on email is the real guard: even two signups at the
+  // same moment cannot both win. The password is stored only as a hash.
+  const users = {
+    create({ name, email, passwordHash, role }) {
+      return inTransaction(() => {
+        if (db.prepare("SELECT 1 FROM users WHERE email = ?").get(email)) {
+          throw new DomainError("EMAIL_TAKEN", "That email already has an account. Log in instead.");
+        }
+        const id = "U-" + String(nextCount("user")).padStart(6, "0");
+        db.prepare("INSERT INTO users (id, name, email, password_hash, role) VALUES (?, ?, ?, ?, ?)").run(id, name, email, passwordHash, role);
+        return { id, name, email, passwordHash, role };
+      });
+    },
+    findByEmail(email) {
+      const r = typeof email === "string" ? db.prepare("SELECT * FROM users WHERE email = ?").get(email) : undefined;
+      return r ? { id: r.id, name: r.name, email: r.email, passwordHash: r.password_hash, role: r.role } : undefined;
+    },
+    findById(id) {
+      const r = typeof id === "string" ? db.prepare("SELECT * FROM users WHERE id = ?").get(id) : undefined;
+      return r ? { id: r.id, name: r.name, email: r.email, passwordHash: r.password_hash, role: r.role } : undefined;
+    },
+  };
+
   return {
     bookings,
+    users,
     getEvent,
     requireEvent,
     listEvents,

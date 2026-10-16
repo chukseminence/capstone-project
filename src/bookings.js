@@ -49,7 +49,8 @@ export class BookingBook {
   // S06: book tickets.
   // Capacity rule: you only get seats if enough are left. All or nothing.
   // A new booking starts "pending". Paying it moves it to "paid".
-  book(event, tierId, buyerName, quantity = 1) {
+  // userId = who owns the booking. holdExpiresAt = when an unpaid booking stops holding its seats.
+  book(event, tierId, buyerName, quantity = 1, { userId = null, holdExpiresAt = null } = {}) {
     checkBookingRequest(buyerName, quantity);
     if (event.status !== "published") {
       throw new DomainError("NOT_PUBLISHED", "This event is not published, so it cannot be booked.");
@@ -70,6 +71,8 @@ export class BookingBook {
       quantity,
       totalCents: tier.priceCents * quantity,
       status: INITIAL_STATE,
+      userId,
+      holdExpiresAt,
     };
     this.#byRef.set(booking.ref, booking);
     return booking;
@@ -132,6 +135,11 @@ export class BookingBook {
     }
     tier.waitlist.enqueue({ name });
     return tier.waitlist.size; // your place in line
+  }
+
+  // S13: only the bookings that belong to one user, newest first.
+  listForUser(userId) {
+    return [...this.#byRef.values()].filter((b) => b.userId === userId).reverse();
   }
 
   // Only used by the benchmark, to compare against Map.

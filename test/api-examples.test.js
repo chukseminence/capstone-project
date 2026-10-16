@@ -20,16 +20,30 @@ function words(line) {
 }
 
 // Each example is: ### title, a ``` curl command ```, "Expected: **NNN ...**", a ```json answer```.
-const examples = [...doc.matchAll(/### (\d+)\. (.+?)\n[\s\S]*?```\n(curl .+?)\n```\s+Expected: \*\*(\d{3}) [^*]+\*\*\s+```json\n([\s\S]+?)\n```/g)].map((m) => ({
+const examples = [...doc.matchAll(/### (\d+)\. (.+?)\n([\s\S]*?)```\n(curl .+?)\n```\s+Expected: \*\*(\d{3}) [^*]+\*\*\s+```json\n([\s\S]+?)\n```/g)].map((m) => ({
   number: Number(m[1]),
   title: m[2],
-  command: words(m[3]),
-  status: Number(m[4]),
-  json: JSON.parse(m[5]),
+  // "set ORG=" in the note means: the token in this answer is saved under the name ORG
+  saveAs: /`set (\w+)=`/.exec(m[3])?.[1] ?? null,
+  command: words(m[4]),
+  status: Number(m[5]),
+  json: JSON.parse(m[6]),
 }));
 
+// Tokens and times change every run, so the page shows "<token>" and "<time>".
+// We check the real answer LOOKS right, then swap it for the placeholder before comparing.
+function maskLikeThePage(actual, expected) {
+  if (expected === "<token>" && typeof actual === "string" && /^[\w-]+\.[\w-]+\.[\w-]+$/.test(actual)) return "<token>";
+  if (expected === "<time>" && typeof actual === "string" && Math.abs(Date.parse(actual) - Date.now()) < 11 * 60_000) return "<time>";
+  if (Array.isArray(actual) && Array.isArray(expected)) return actual.map((v, i) => maskLikeThePage(v, expected[i]));
+  if (actual && expected && typeof actual === "object" && typeof expected === "object") {
+    return Object.fromEntries(Object.entries(actual).map(([k, v]) => [k, maskLikeThePage(v, expected[k])]));
+  }
+  return actual;
+}
+
 test("the page has examples, numbered 1, 2, 3... with no gaps", () => {
-  assert.ok(examples.length >= 20, `found only ${examples.length} examples`);
+  assert.ok(examples.length >= 30, `found only ${examples.length} examples`);
   examples.forEach((ex, i) => assert.equal(ex.number, i + 1));
   const headings = [...doc.matchAll(/^### \d+\./gm)].length;
   assert.equal(examples.length, headings, "an example heading could not be read");
@@ -47,7 +61,7 @@ for (const [label, makeStore] of [
     let base;
     before(async () => {
       store = makeStore();
-      server = createServer({ publicDir, store });
+      server = createServer({ publicDir, store, hashCost: { N: 1024, r: 8, p: 1 } });
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       base = `http://127.0.0.1:${server.address().port}`;
     });
@@ -59,8 +73,9 @@ for (const [label, makeStore] of [
 
     // One test that runs them all in order (they depend on each other).
     test("every example in docs/api-examples.md gives the documented answer", async () => {
+      const tokens = {}; // %ORG%, %ATT% ... in the page become the real tokens we were given
       for (const ex of examples) {
-        const args = ex.command.slice(1); // drop the word "curl"
+        const args = ex.command.slice(1).map((a) => a.replace(/%(\w+)%/g, (_, name) => tokens[name] ?? assert.fail(`example ${ex.number}: %${name}% was never saved`))); // drop the word "curl"
         let method = "GET";
         const headers = {};
         let body;
@@ -83,9 +98,10 @@ for (const [label, makeStore] of [
         // curl uses POST when there is a body and no -X; our commands always say -X.
         const res = await fetch(url, { method, headers, body });
         const actual = await res.json();
+        if (ex.saveAs) tokens[ex.saveAs] = actual.token;
         const label = `example ${ex.number} (${ex.title})`;
         assert.equal(res.status, ex.status, `${label}: wrong status. Got ${JSON.stringify(actual)}`);
-        assert.deepEqual(actual, ex.json, `${label}: the answer differs from the page`);
+        assert.deepEqual(maskLikeThePage(actual, ex.json), ex.json, `${label}: the answer differs from the page`);
       }
     });
 

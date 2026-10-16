@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { createSqliteStore } from "../src/data/sqliteStore.js";
 import { createMemoryStore } from "../src/data/memoryStore.js";
-import { createEventService } from "../src/services/eventService.js";
-import { createBookingService } from "../src/services/bookingService.js";
+import { createEventServiceAsOrganizer as createEventService, organizerOf, attendeeOf, bearer, TEST_SECRET } from "./actors.js";
+import { createBookingServiceAsAttendee as createBookingService } from "./actors.js";
 import { createServer } from "../src/server.js";
 import { naiveBook } from "../scripts/naiveBooking.js";
 import { runCrowd } from "../scripts/crowd.js";
@@ -179,11 +179,14 @@ describe("SQLite: data survives a restart", () => {
 
   test("the whole server: create things, stop it, start a new one on the same file", async () => {
     const file = newFile();
+    let org, att;
     async function withServer(fn) {
       const store = createSqliteStore(file);
-      const server = createServer({ publicDir, store });
+      const server = createServer({ publicDir, store, tokenSecret: TEST_SECRET });
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       const base = `http://127.0.0.1:${server.address().port}`;
+      org = organizerOf(store); // the accounts live in the file too, so they survive the restart
+      att = attendeeOf(store);
       try {
         return await fn(base);
       } finally {
@@ -192,8 +195,8 @@ describe("SQLite: data survives a restart", () => {
         store.close();
       }
     }
-    const post = (base, url, body) =>
-      fetch(base + url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body && JSON.stringify(body) }).then(async (r) => ({ status: r.status, json: await r.json() }));
+    const post = (base, url, body, who = url.startsWith("/api/bookings") ? att : org) =>
+      fetch(base + url, { method: "POST", headers: { "Content-Type": "application/json", ...bearer(who) }, body: body && JSON.stringify(body) }).then(async (r) => ({ status: r.status, json: await r.json() }));
 
     await withServer(async (base) => {
       await post(base, "/api/events", eventInput);
@@ -208,7 +211,7 @@ describe("SQLite: data survives a restart", () => {
     await withServer(async (base) => {
       const event = await (await fetch(base + "/api/events/EV-000001")).json();
       assert.equal(event.event.tiers[0].seatsLeft, 1);
-      const booking = await (await fetch(base + "/api/bookings/BK-000001")).json();
+      const booking = await (await fetch(base + "/api/bookings/BK-000001", { headers: bearer(att) })).json();
       assert.equal(booking.booking.status, "paid");
       const search = await (await fetch(base + "/api/events?city=Lagos")).json();
       assert.equal(search.events.length, 1);
@@ -220,11 +223,11 @@ describe("SQLite: data survives a restart", () => {
 
 // ---------------------------------------------------------------------------------
 describe("SQLite: the schema version", () => {
-  test("a new file gets schema version 1", () => {
+  test("a new file gets the newest schema version (2)", () => {
     const file = newFile();
     createSqliteStore(file).close();
     const db = new DatabaseSync(file);
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 2);
     db.close();
   });
 
@@ -366,15 +369,16 @@ describe("S08: the last ticket", () => {
     const event = events.create(eventInput);
     events.addTier(event.id, { name: "Last", priceCents: 500000, capacity: 1 });
     events.publish(event.id);
-    const server = createServer({ publicDir, store });
+    const server = createServer({ publicDir, store, tokenSecret: TEST_SECRET });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
+    const who = attendeeOf(store);
     try {
       const replies = await Promise.all(
         Array.from({ length: 50 }, (_, i) =>
           fetch(base + "/api/bookings", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...bearer(who) },
             body: JSON.stringify({ eventId: event.id, tierId: "T1", buyerName: `Person ${i + 1}`, quantity: 1 }),
           }).then(async (r) => ({ status: r.status, json: await r.json() }))
         )
@@ -412,18 +416,19 @@ describe("SQLite: when the database stays locked", () => {
     first.store.close();
 
     const store = createSqliteStore(file, { busyTimeoutMs: 30 }); // give up quickly, for the test
+    const attendee = attendeeOf(store); // made BEFORE the lock is taken: creating an account needs to write
     const locker = new DatabaseSync(file);
     locker.exec("BEGIN IMMEDIATE"); // somebody else is writing, and takes their time
 
     try {
       assert.throws(() => store.bookings.book(store.requireEvent("EV-000001"), "T1", "Ada", 1), { code: "BUSY" });
 
-      const server = createServer({ publicDir, store });
+      const server = createServer({ publicDir, store, tokenSecret: TEST_SECRET });
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       try {
         const res = await fetch(`http://127.0.0.1:${server.address().port}/api/bookings`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...bearer(attendee) },
           body: JSON.stringify({ eventId: "EV-000001", tierId: "T1", buyerName: "Ada", quantity: 1 }),
         });
         assert.equal(res.status, 503);
@@ -477,7 +482,7 @@ describe("both stores enforce the booking life cycle themselves", () => {
 describe("both stores behave the same (contract)", () => {
   function scenario(store) {
     const events = createEventService(store);
-    const bookings = createBookingService(store);
+    const bookings = createBookingService(store, { now: () => 1_800_000_000_000 }); // a frozen clock, so both stores see the same deadline
     const log = [];
     const attempt = (label, fn) => {
       try {

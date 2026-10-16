@@ -33,5 +33,11 @@ export function presentBooking(booking) {
     quantity: booking.quantity,
     totalCents: booking.totalCents,
     status: booking.status,
+    holdExpiresAt: booking.holdExpiresAt ?? null,
   };
+}
+
+// Never includes the password hash. Only these four fields ever leave the server.
+export function presentUser(user) {
+  return { id: user.id, name: user.name, email: user.email, role: user.role };
 }

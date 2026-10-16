@@ -1,10 +1,12 @@
 // S06: look at one event, choose a ticket type and a quantity.
-import { getEvent, createBooking, ApiError, MAX_PER_BOOKING } from "../api.js";
+import { getEvent, createBooking, ApiError, MAX_PER_BOOKING, currentUser } from "../api.js";
 import { h, uniqueId } from "../dom.js";
 import { formatMoney, describeDate, ticketWord } from "../money.js";
 
 export async function eventView({ id }) {
   const { event } = await getEvent(id);
+  const user = currentUser();
+  const canBook = user?.role === "attendee"; // the server checks this too
   const date = describeDate(event.date);
   const anyAvailable = event.tiers.some((t) => t.seatsLeft > 0);
   const radioName = uniqueId("tier");
@@ -13,11 +15,21 @@ export async function eventView({ id }) {
 
   const nameId = uniqueId("buyer");
   const qtyId = uniqueId("qty");
-  const nameInput = h("input", { id: nameId, name: "buyerName", autocomplete: "name", required: true, "aria-describedby": uniqueId("hint") });
+  const nameInput = h("input", { id: nameId, name: "buyerName", autocomplete: "name", required: true, value: user?.name ?? "" });
   const qtyInput = h("input", { id: qtyId, name: "quantity", type: "number", inputmode: "numeric", min: 1, value: 1, step: 1 });
   const total = h("p", { class: "total", "aria-live": "polite" });
   const error = h("p", { class: "field-error", role: "alert", hidden: true, tabindex: "-1" });
   const submit = h("button", { type: "submit", class: "button button-primary" }, "Reserve tickets");
+
+  // Who may book? Only a logged-in attendee. Everyone else gets told what to do.
+  function loginNote() {
+    if (canBook) return null;
+    const here = encodeURIComponent(`#/event/${event.id}`);
+    if (!user) {
+      return h("p", { class: "notice" }, h("a", { href: `#/login?next=${here}` }, "Log in"), " or ", h("a", { href: `#/signup?next=${here}` }, "create an account"), " to book tickets.");
+    }
+    return h("p", { class: "notice", text: "Organizer accounts cannot book tickets. Log in with an attendee account to book." });
+  }
 
   function maxFor(t) {
     return t ? Math.min(MAX_PER_BOOKING, t.seatsLeft) : 0;
@@ -26,8 +38,8 @@ export async function eventView({ id }) {
   function update() {
     const max = maxFor(chosen);
     qtyInput.max = String(Math.max(max, 1));
-    qtyInput.disabled = !chosen;
-    submit.disabled = !chosen;
+    qtyInput.disabled = !chosen || !canBook;
+    submit.disabled = !chosen || !canBook;
     const qty = Number(qtyInput.value);
     if (chosen && Number.isInteger(qty) && qty >= 1 && qty <= max) {
       total.textContent = `Total: ${formatMoney(chosen.priceCents * qty)} for ${qty} ${ticketWord(qty)}`;
@@ -61,6 +73,7 @@ export async function eventView({ id }) {
   const form = h("form", { class: "booking", novalidate: true, "aria-label": "Reserve tickets" },
     tiers,
     anyAvailable ? null : h("p", { class: "notice-sold", text: "Every ticket type is sold out. Check the other events." }),
+    loginNote(),
     h("div", { class: "field" }, h("label", { for: qtyId }, `Number of tickets (up to ${MAX_PER_BOOKING})`), qtyInput),
     h("div", { class: "field" }, h("label", { for: nameId }, "Name for the booking"), nameInput),
     total, error, submit);
@@ -97,6 +110,7 @@ export async function eventView({ id }) {
       submit.textContent = "Reserve tickets";
       showError(err instanceof ApiError ? err.message : "The booking could not be made. Try again.");
       if (err instanceof ApiError && err.code === "SOLD_OUT") setTimeout(() => location.reload(), 2500);
+      if (err instanceof ApiError && err.code === "UNAUTHENTICATED") location.hash = `#/login?next=${encodeURIComponent(`#/event/${event.id}`)}`;
     }
   });
 
@@ -104,6 +118,7 @@ export async function eventView({ id }) {
 
   const element = h("section", { class: "page" },
     h("p", { class: "back" }, h("a", { href: "#/" }, "Back to all events")),
+    event.status === "draft" ? h("p", { class: "banner banner-warn", text: "This event is a draft. Only you can see it. Publish it from My events so people can book." }) : null,
     h("div", { class: "event-head" },
       h("div", {},
         h("h1", { text: event.title }),

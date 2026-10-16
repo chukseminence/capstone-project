@@ -138,6 +138,41 @@ input[aria-invalid="true"] { border-color: var(--red); background: var(--red-sof
 .ticket-confirmed { margin: 1.25rem 0 1.5rem; border-left: 8px solid var(--green); }
 .ref { font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
 
+/* header navigation */
+.site-header { flex-wrap: wrap; gap: 0.5rem 1.5rem; }
+.site-header nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1.25rem; }
+.nav-user { color: #d4d9e0; }
+.nav-button { font: inherit; color: #fff; background: none; border: 0; padding: 0.4rem 0; text-decoration: underline; text-underline-offset: 0.18em; cursor: pointer; }
+.nav-button:focus-visible, .site-header a:focus-visible { outline-color: var(--yellow); }
+
+/* sign up / log in */
+.auth-form { background: var(--face); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1rem; }
+.auth-form .button-primary { width: 100%; }
+.roles { border: 0; padding: 0; margin: 0 0 1.25rem; display: grid; gap: 0.5rem; }
+.choice { display: flex; align-items: center; gap: 0.7rem; border: 2px solid var(--line); border-radius: 8px; padding: 0.7rem 0.9rem; font-weight: 600; cursor: pointer; }
+.choice:has(input:checked) { border-color: var(--ink); background: #fff9e3; }
+.choice:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* organizer dashboard */
+.manage-form, .manage-card { background: var(--face); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.25rem; }
+.manage-form { margin-bottom: 1rem; }
+.field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0 1rem; }
+.manage-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; }
+.manage-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.manage-head h2 a { text-decoration: none; }
+.manage-head h2 a:hover { text-decoration: underline; }
+.tier-summary { margin: 0.5rem 0; padding-left: 1.2rem; }
+.add-tier { margin: 0.75rem 0; }
+.add-tier summary { cursor: pointer; font-weight: 650; padding: 0.4rem 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.75rem 0 0; }
+
+/* booking status words (never colour alone) */
+.badge-status { margin: 0.4rem 0 0 !important; border: 1px solid transparent; }
+.badge-pending { background: #fff0bd; color: var(--yellow-deep); border-color: var(--yellow-deep); }
+.badge-paid { background: #d9f2e6; color: #064a30; border-color: var(--green); }
+.badge-cancelled, .badge-expired, .badge-refunded { background: #e9ecf0; color: #3b4350; border-color: #8a94a2; }
+.ticket-cancelled .ticket-stub, .ticket-expired .ticket-stub, .ticket-refunded .ticket-stub { background: #c9ced6; }
+
 @media (max-width: 40rem) {
   .checkout-grid { grid-template-columns: 1fr; }
   .event-head { flex-direction: column-reverse; }

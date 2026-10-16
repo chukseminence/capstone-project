@@ -7,7 +7,9 @@ import { sendError } from "./respond.js";
 export const STATUS_BY_CODE = {
   VALIDATION: 400,
   BAD_REQUEST: 400,
+  UNAUTHENTICATED: 401,
   PAYMENT_DECLINED: 402,
+  FORBIDDEN: 403,
   NOT_FOUND: 404,
   METHOD_NOT_ALLOWED: 405,
   SOLD_OUT: 409,
@@ -15,6 +17,7 @@ export const STATUS_BY_CODE = {
   NOT_SOLD_OUT: 409,
   INVALID_STATE: 409,
   ALREADY_CANCELLED: 409,
+  EMAIL_TAKEN: 409,
   PAYLOAD_TOO_LARGE: 413,
   UNSUPPORTED_MEDIA_TYPE: 415,
   BUSY: 503,
@@ -25,6 +28,7 @@ export const STATUS_BY_CODE = {
 export function sendCaughtError(req, res, err) {
   const known = err instanceof DomainError || err instanceof HttpProblem;
   const status = known ? STATUS_BY_CODE[err.code] : undefined;
+  if (status === 401) return sendError(req, res, 401, err.code, err.message, { "WWW-Authenticate": "Bearer" });
   if (status) return sendError(req, res, status, err.code, err.message);
   console.error(err);
   return sendError(req, res, 500, "INTERNAL", "Something went wrong on the server.");

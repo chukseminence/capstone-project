@@ -1,7 +1,9 @@
 import { sendJson, sendError } from "./respond.js";
 import { sendCaughtError, HttpProblem } from "./errors.js";
 import { readJsonBody } from "./body.js";
-import { presentEvent, presentTier, presentBooking } from "./present.js";
+import { presentEvent, presentTier, presentBooking, presentUser } from "./present.js";
+import { DomainError } from "../services/errors.js";
+import { requireLogin } from "../services/access.js";
 
 // ROUTES layer: the REST API.
 // A route only (1) reads the request, (2) asks a service to do the work,
@@ -43,14 +45,55 @@ function readSearchQuery(searchParams) {
 }
 
 export function createApiHandler({ services }) {
-  const { events, bookings } = services;
+  const { events, bookings, auth } = services;
 
   // The route table: method + pattern -> what to do.
   // Each handler returns { status, body, headers? }.
+  // auth: "none"      nobody needs to log in
+  //       "optional"  a login is used if there is one (a bad token is treated as "not logged in")
+  //       "required"  no valid login -> 401
+  // Who may do WHAT (roles, owners) is decided in the services, not here.
   const table = [
+    {
+      method: "POST",
+      pattern: "/api/auth/signup",
+      auth: "none",
+      run: async ({ req }) => {
+        const result = await auth.signup(await readJsonBody(req));
+        return { status: 201, body: { user: presentUser(result.user), token: result.token } };
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/api/auth/login",
+      auth: "none",
+      run: async ({ req }) => {
+        const result = await auth.login(await readJsonBody(req));
+        return { status: 200, body: { user: presentUser(result.user), token: result.token } };
+      },
+    },
+    {
+      method: "GET",
+      pattern: "/api/me",
+      auth: "required",
+      run: ({ actor }) => ({ status: 200, body: { user: presentUser(actor) } }),
+    },
+    {
+      method: "GET",
+      pattern: "/api/me/bookings",
+      auth: "required",
+      run: ({ actor }) => ({ status: 200, body: { bookings: bookings.listMine(actor).map(presentBooking) } }),
+    },
+    {
+      method: "GET",
+      pattern: "/api/me/events",
+      auth: "required",
+      run: ({ actor }) => ({ status: 200, body: { events: events.listMine(actor).map(presentEvent) } }),
+    },
     {
       method: "GET",
       pattern: "/api/events",
+      auth: "none",
       run: ({ url }) => {
         const { filters, sort, order } = readSearchQuery(url.searchParams);
         if (order !== undefined && sort === undefined) {
@@ -63,10 +106,12 @@ export function createApiHandler({ services }) {
     {
       method: "POST",
       pattern: "/api/events",
-      run: async ({ req }) => {
+      auth: "required",
+      run: async ({ req, actor }) => {
         const input = await readJsonBody(req);
         delete input.id; // the server chooses event ids, never the client
-        const event = events.create(input);
+        delete input.ownerId; // ...and the owner is always the logged-in organizer
+        const event = events.create(input, actor);
         return {
           status: 201,
           headers: { Location: `/api/events/${event.id}` },
@@ -77,33 +122,38 @@ export function createApiHandler({ services }) {
     {
       method: "GET",
       pattern: "/api/events/:eventId",
-      run: ({ params }) => ({ status: 200, body: { event: presentEvent(events.get(params.eventId)) } }),
+      auth: "optional",
+      run: ({ params, actor }) => ({ status: 200, body: { event: presentEvent(events.get(params.eventId, actor)) } }),
     },
     {
       method: "POST",
       pattern: "/api/events/:eventId/tiers",
-      run: async ({ req, params }) => {
+      auth: "required",
+      run: async ({ req, params, actor }) => {
         const input = await readJsonBody(req);
-        const tier = events.addTier(params.eventId, input);
+        const tier = events.addTier(params.eventId, input, actor);
         return { status: 201, body: { tier: presentTier(tier) } };
       },
     },
     {
       method: "POST",
       pattern: "/api/events/:eventId/publish",
-      run: ({ params }) => ({ status: 200, body: { event: presentEvent(events.publish(params.eventId)) } }),
+      auth: "required",
+      run: ({ params, actor }) => ({ status: 200, body: { event: presentEvent(events.publish(params.eventId, actor)) } }),
     },
     {
       method: "POST",
       pattern: "/api/events/:eventId/unpublish",
-      run: ({ params }) => ({ status: 200, body: { event: presentEvent(events.unpublish(params.eventId)) } }),
+      auth: "required",
+      run: ({ params, actor }) => ({ status: 200, body: { event: presentEvent(events.unpublish(params.eventId, actor)) } }),
     },
     {
       method: "POST",
       pattern: "/api/bookings",
-      run: async ({ req }) => {
+      auth: "required",
+      run: async ({ req, actor }) => {
         const { eventId, tierId, buyerName, quantity } = await readJsonBody(req);
-        const booking = bookings.book(eventId, tierId, buyerName, quantity);
+        const booking = bookings.book(eventId, tierId, buyerName, quantity, actor);
         return {
           status: 201,
           headers: { Location: `/api/bookings/${booking.ref}` },
@@ -114,22 +164,25 @@ export function createApiHandler({ services }) {
     {
       method: "GET",
       pattern: "/api/bookings/:ref",
-      run: ({ params }) => ({ status: 200, body: { booking: presentBooking(bookings.find(params.ref)) } }),
+      auth: "required",
+      run: ({ params, actor }) => ({ status: 200, body: { booking: presentBooking(bookings.find(params.ref, actor)) } }),
     },
     {
       method: "POST",
       pattern: "/api/bookings/:ref/pay",
-      run: async ({ req, params }) => {
+      auth: "required",
+      run: async ({ req, params, actor }) => {
         const { paymentToken } = await readJsonBody(req);
-        return { status: 200, body: { booking: presentBooking(bookings.pay(params.ref, paymentToken)) } };
+        return { status: 200, body: { booking: presentBooking(bookings.pay(params.ref, paymentToken, actor)) } };
       },
     },
     {
       method: "POST",
       pattern: "/api/bookings/:ref/cancel",
-      run: ({ params }) => {
+      auth: "required",
+      run: ({ params, actor }) => {
         // Never send back the waitlist hand-over: it holds other people's names.
-        const { booking } = bookings.cancelUnpaid(params.ref);
+        const { booking } = bookings.cancelUnpaid(params.ref, actor);
         return { status: 200, body: { booking: presentBooking(booking) } };
       },
     },
@@ -167,7 +220,19 @@ export function createApiHandler({ services }) {
         allowed.push(route.method);
         if (route.method !== method) continue;
 
-        const result = await route.run({ req, url, params });
+        // Who is asking? Look at the login BEFORE doing any work.
+        let actor = null;
+        if (route.auth === "required") {
+          actor = requireLogin(auth.authenticate(req.headers.authorization));
+        } else if (route.auth === "optional") {
+          try {
+            actor = auth.authenticate(req.headers.authorization);
+          } catch (err) {
+            if (!(err instanceof DomainError && err.code === "UNAUTHENTICATED")) throw err;
+          }
+        }
+
+        const result = await route.run({ req, url, params, actor });
         return sendJson(req, res, result.status, result.body, result.headers);
       }
 

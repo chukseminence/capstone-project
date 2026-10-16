@@ -1,8 +1,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { createMemoryStore } from "../src/data/memoryStore.js";
-import { createEventService } from "../src/services/eventService.js";
-import { createBookingService } from "../src/services/bookingService.js";
+import { createEventServiceAsOrganizer as createEventService } from "./actors.js";
+import { createBookingServiceAsAttendee as createBookingService } from "./actors.js";
 import { seatsLeft } from "../src/events.js";
 
 function setup() {

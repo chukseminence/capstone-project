@@ -1,4 +1,4 @@
-# Architecture (Build 5)
+# Architecture (Build 7)
 
 This page shows how the project is organised: what each part is for, which part may talk to which, and what happens when a request arrives.
 
@@ -68,12 +68,12 @@ Any other address goes to `src/routes/static.js`. It turns the address into a fi
 
 ## What exists now, and what comes later
 
-| Part | Build 5 (now) | Later |
+| Part | Now (Build 7) | Later |
 |---|---|---|
-| Routes | `/health`, static files and the REST API under `/api` | Build 6: the frontend calls the API; Build 7: login checks |
+| Routes | `/health`, static files and the REST API under `/api`, login and permission checks | Build 8 and 9: refund and check-in routes |
 | Services | Event and booking services, mock payment, used by the routes | Build 8: refunds, waitlist offers |
 | Rules | Events, bookings, search, sort, states, mock payment | Build 8: refund amount, waitlist offers, expiry |
-| Data | SQLite file (memory store kept for tests) | Build 7: users table |
+| Data | SQLite file with users and owners (memory store kept for tests) | Build 8: refunds, hold expiry |
 
 ## Decisions and shortcuts
 
@@ -95,9 +95,15 @@ Any other address goes to `src/routes/static.js`. It turns the address into a fi
 - **Presenters pick fields by name** (`src/routes/present.js`). The waitlist (other people's names) can never leak by accident.
 - **The server makes event ids** (`EV-000001`). A client-sent `id` is ignored.
 - **One table maps every error code to a status** (`src/routes/errors.js`). A test scans the source and fails if a code has no status.
-- **Known shortcut:** `GET /api/events/:id` shows drafts too. Build 7 (login) restricts that to the organizer.
+- **Fixed in Build 7:** `GET /api/events/:id` used to show drafts to everyone. Now only the owner sees a draft.
 
 ## The website (added in Build 6)
 `public/` is the front door for people. It is NOT part of `src/` and does not import from it.
-Inside it, only `public/js/api.js` gets data (fake for now, real `/api` calls in Build 7).
-Pages -> `api.js` -> (Build 7) the REST API -> services -> data. See `docs/frontend.md`.
+Inside it, only `public/js/api.js` gets data, through real `/api` calls (since Build 7).
+Pages -> `api.js` -> the REST API -> services -> data. See `docs/frontend.md`.
+
+## Login and permissions (added in Build 7)
+- Routes read the `Authorization: Bearer` header and ask `authService.authenticate` who the actor is (or nobody).
+- Services receive the **actor** and check it with `services/access.js` before doing anything. Routes contain no permission rules.
+- Passwords and tokens are rules-layer files (`src/auth.js`, `src/tokens.js`): pure code, no storage, easy to test.
+- The data layer gets a `users` table and owner columns. See `docs/auth.md` and `docs/database.md`.
