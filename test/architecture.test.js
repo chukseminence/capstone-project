@@ -33,7 +33,7 @@ function listJsFiles(dir) {
 
 function layerOf(file) {
   const parts = path.relative(SRC, file).split(path.sep);
-  if (parts.length > 1) return parts[0]; // routes, services or data
+    if (parts.length > 1) return parts[0] === "domain" ? "rules" : parts[0]; // routes, services, data (domain counts as rules)
   return parts[0] === "server.js" ? "server" : "rules";
 }
 
