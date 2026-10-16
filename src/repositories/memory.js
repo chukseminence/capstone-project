@@ -1,17 +1,29 @@
-// Build 4: the data layer. An in-memory repository with async methods, so it
-// has the same shape as the SQLite repository that arrives in Build 5. It holds
-// no business rules: it only stores and fetches.
-//
-// Services receive a repository as an argument; they never import one.
-
+// Build 4/7: the data layer with users added for Build 7
 export function createMemoryRepository() {
-  const events = new Map(); // eventId -> event
-  const tiers = new Map(); // tierId -> tier
-  const bookings = new Map(); // bookingId -> booking
-  const bookingsByReference = new Map(); // reference -> booking
+  const events = new Map();
+  const tiers = new Map();
+  const bookings = new Map();
+  const bookingsByReference = new Map();
+  const users = new Map();
+  const usersByEmail = new Map();
 
   return {
-    // --- events ---
+    async saveUser(user) {
+      users.set(user.id, user);
+      if (user.email) {
+        usersByEmail.set(user.email, user);
+      }
+      return user;
+    },
+    async findUserById(id) {
+      return users.get(id) ?? null;
+    },
+    async findUserByEmail(email) {
+      if (!email) return null;
+      const key = String(email).toLowerCase();
+      return usersByEmail.get(key) ?? null;
+    },
+
     async saveEvent(event) {
       events.set(event.id, event);
       return event;
@@ -23,7 +35,6 @@ export function createMemoryRepository() {
       return [...events.values()];
     },
 
-    // --- ticket tiers ---
     async saveTier(tier) {
       tiers.set(tier.id, tier);
       return tier;
@@ -35,8 +46,6 @@ export function createMemoryRepository() {
       return [...tiers.values()];
     },
 
-    // The memory twin of the SQL atomic update. There is no await inside, so
-    // nothing can interleave between the check and the increment.
     async reserveSeats(tierId, quantity) {
       const tier = tiers.get(tierId);
       if (!tier) return false;
@@ -51,7 +60,6 @@ export function createMemoryRepository() {
       return true;
     },
 
-    // --- bookings ---
     async saveBooking(booking) {
       bookings.set(booking.id, booking);
       bookingsByReference.set(booking.reference, booking);
@@ -62,6 +70,9 @@ export function createMemoryRepository() {
     },
     async listBookings() {
       return [...bookings.values()];
+    },
+    async listBookingsForUser(userId) {
+      return [...bookings.values()].filter((b) => b.userId === userId);
     },
   };
 }

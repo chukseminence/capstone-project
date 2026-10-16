@@ -1,25 +1,15 @@
-// Build 4: the routes layer.
+// Build 4/7: the route table.
 //
-// A route handler does two things only: turn an HTTP request into a call to a
-// service, and turn the service's return value (or thrown DomainError) back into
-// HTTP. No business rules live here: they are all in src/services/.
+// A handler does three things only: ask a guard who is calling, call ONE
+// service, and return a value (or let a DomainError become a status). No
+// business rule lives here - in particular the role check is done by the guard
+// on the server, never trusted from the page.
 //
-// Identity: until Build 7 adds real login, the caller says who they are with an
-// `x-user-id` header.
+// The auth routes are registered from ./routes/auth.js. The Build 7 prompt says
+// src/routes/auth.js, but architecture.md keeps every HTTP concern in src/http.
 
-import { DomainError } from '../domain/errors.js';
+import { registerAuthRoutes } from './routes/auth.js';
 
-function requireUserId(req) {
-  const header = req.headers['x-user-id'];
-  const id = header === undefined ? '' : String(header).trim();
-  if (id === '') {
-    throw new DomainError('UNAUTHORIZED', 'x-user-id header is required');
-  }
-  return id;
-}
-
-// Query values arrive as strings. Turn "" and missing into undefined so the
-// domain rules see real "not provided" values instead of empty strings.
 function queryValue(query, name) {
   const value = query.get(name);
   return value === null || value === '' ? undefined : value;
@@ -29,33 +19,50 @@ function optionalNumber(value) {
   return value === undefined ? undefined : Number(value);
 }
 
-export function registerRoutes(router, services = {}) {
-  const { eventService, bookingService } = services;
-
+export function registerRoutes(router, { eventService, bookingService, authService, guards } = {}) {
   router.get('/health', () => ({ status: 'ok' }));
 
-  if (!eventService || !bookingService) return router;
+  if (authService && guards) {
+    registerAuthRoutes(router, { authService, guards });
+  }
 
-  // --- events ---
+  if (!eventService || !bookingService || !guards) return router;
 
-  router.post('/api/events', async ({ req, res, body }) => {
-    const event = await eventService.createEvent({
-      ...(body ?? {}),
-      organizerId: requireUserId(req),
-    });
+  const { requireUser, requireRole } = guards;
+
+  // --- auth-protected, organizer only ---
+
+  router.post('/api/events', ({ req, res, body }) => {
+    const user = requireRole(req, 'organizer');
     res.statusCode = 201;
-    return event;
+    return eventService.createEvent({ ...(body ?? {}), organizerId: user.userId });
   });
 
-  router.post('/api/events/:id/tiers', async ({ params, body }) => {
-    return eventService.addTier(params.id, body ?? {});
+  // `/api/events/mine` is registered BEFORE `/api/events/:id` so "mine" is not
+  // read as an event id (the router takes the first match).
+  router.get('/api/events/mine', ({ req }) => {
+    const user = requireRole(req, 'organizer');
+    return eventService.listForOrganizer(user.userId);
   });
 
-  router.post('/api/events/:id/publish', async ({ params }) => {
-    return eventService.publishEvent(params.id);
+  router.post('/api/events/:id/tiers', ({ req, params, body }) => {
+    const user = requireRole(req, 'organizer');
+    return eventService.addTier(params.id, body ?? {}, { organizerId: user.userId });
   });
 
-  router.get('/api/events', async ({ query }) => {
+  router.post('/api/events/:id/publish', ({ req, params }) => {
+    const user = requireRole(req, 'organizer');
+    return eventService.publishEvent(params.id, { organizerId: user.userId });
+  });
+
+  router.post('/api/events/:id/unpublish', ({ req, params }) => {
+    const user = requireRole(req, 'organizer');
+    return eventService.unpublishEvent(params.id, { organizerId: user.userId });
+  });
+
+  // --- public ---
+
+  router.get('/api/events', ({ query }) => {
     return eventService.search({
       q: queryValue(query, 'q'),
       city: queryValue(query, 'city'),
@@ -67,32 +74,60 @@ export function registerRoutes(router, services = {}) {
     });
   });
 
-  // --- bookings ---
-
-  router.post('/api/bookings', async ({ req, res, body }) => {
-    const booking = await bookingService.book({
-      tierId: body?.tierId,
-      quantity: body?.quantity,
-      userId: requireUserId(req),
-    });
-    res.statusCode = 201;
-    return booking;
+  // One event with its tiers, for the event page. The owner sees their draft;
+  // everybody else gets NOT_FOUND for a draft.
+  router.get('/api/events/:id', ({ req, params }) => {
+    const user = tryRequireUser(req, requireUser);
+    return eventService.getEventWithTiers(params.id, { userId: user?.userId });
   });
 
-  router.post('/api/bookings/:reference/pay', async ({ req, params, body }) => {
+  // --- bookings ---
+
+  router.post('/api/bookings', ({ req, res, body }) => {
+    const user = requireUser(req);
+    res.statusCode = 201;
+    return bookingService.book({
+      tierId: body?.tierId,
+      quantity: body?.quantity,
+      userId: user.userId,
+    });
+  });
+
+  router.post('/api/bookings/:reference/pay', ({ req, params, body }) => {
+    const user = requireUser(req);
     return bookingService.pay({
       reference: params.reference,
-      userId: requireUserId(req),
+      userId: user.userId,
       card: body?.card,
     });
   });
 
-  router.post('/api/bookings/:reference/cancel', async ({ req, params }) => {
-    return bookingService.cancel({
-      reference: params.reference,
-      userId: requireUserId(req),
-    });
+  router.post('/api/bookings/:reference/cancel', ({ req, params }) => {
+    const user = requireUser(req);
+    return bookingService.cancel({ reference: params.reference, userId: user.userId });
+  });
+
+  // The "my tickets" list. Registered before the :reference route so "me" is
+  // not read as a reference.
+  router.get('/api/bookings/me', ({ req }) => {
+    const user = requireUser(req);
+    return bookingService.listForUser(user.userId);
+  });
+
+  router.get('/api/bookings/:reference', ({ req, params }) => {
+    const user = requireUser(req);
+    return bookingService.getBooking(params.reference, user.userId);
   });
 
   return router;
+}
+
+// A route may be public AND personalised: /api/events/:id lets the owner see a
+// draft. A missing or bad token is not an error here - it just means "anonymous".
+function tryRequireUser(req, requireUser) {
+  try {
+    return requireUser(req);
+  } catch {
+    return undefined;
+  }
 }

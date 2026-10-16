@@ -1,15 +1,21 @@
-// Build 6: the event page - one event, its tiers, a quantity picker, checkout
+// Build 6/7: the event page - one event, its tiers, a quantity picker, checkout
 // with a countdown, and a mock card payment.
 //
 // The seats are held for HOLD_SECONDS once a booking is created. When the
 // countdown reaches zero the Pay button is disabled (real expiry is Build 8).
 // A declined card shows an error and leaves the Pay button enabled to retry.
+//
+// From Build 7 booking and paying need a signed-in user: the button becomes a
+// "log in" link when nobody is signed in, and an expired token is answered with
+// the same link instead of a dead end.
 
 import {
   el, clear, formatMoney, formatDateTime, formatCountdown, clampQuantity,
   MAX_TICKETS_PER_BOOKING,
 } from '../ui.js';
 import { getEvent, createBooking, pay, ApiError } from '../api.js';
+import { isLoggedIn, loginUrl } from '../session.js';
+import { mountNav } from '../nav.js';
 
 const HOLD_SECONDS = 10 * 60;
 
@@ -33,6 +39,21 @@ function showMessage(node, text, kind = 'info') {
 function hideMessage(node) {
   node.hidden = true;
   node.textContent = '';
+}
+
+// The same as showMessage, but with a link at the end - used when the fix is to
+// log in rather than to try again.
+function showMessageWithLink(node, text, href, linkText, kind = 'error') {
+  node.textContent = '';
+  node.className = `message message-${kind}`;
+  node.hidden = false;
+  node.appendChild(document.createTextNode(text));
+  node.appendChild(el('a', { href, text: linkText }));
+}
+
+// Where to come back to after logging in from this page.
+function backToThisPage() {
+  return `/event.html?id=${encodeURIComponent(eventId ?? '')}`;
 }
 
 // --- rendering ---------------------------------------------------------------
@@ -62,11 +83,17 @@ function renderTiers(event) {
           inputmode: 'numeric',
           'aria-describedby': statusId,
         }),
-        el('button', {
-          type: 'button',
-          text: 'Book',
-          on: { click: () => bookTier(event, tier, quantityId, message) },
-        }),
+        isLoggedIn()
+          ? el('button', {
+            type: 'button',
+            text: 'Book',
+            on: { click: () => bookTier(event, tier, quantityId, message) },
+          })
+          : el('a', {
+            class: 'button-link',
+            href: loginUrl(backToThisPage()),
+            text: 'Log in to book',
+          }),
       ];
 
     tiersEl.appendChild(el('article', { class: `card tier${soldOut ? ' tier-soldout' : ''}` },
@@ -96,6 +123,11 @@ async function bookTier(event, tier, quantityId, message) {
   try {
     booking = await createBooking({ tierId: tier.id, quantity });
   } catch (error) {
+    if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
+      // The token was missing, edited or expired (api.js has already dropped it).
+      showMessageWithLink(message, 'Please log in to book: ', loginUrl(backToThisPage()), 'log in', 'error');
+      return;
+    }
     if (error instanceof ApiError && error.code === 'SOLD_OUT') {
       showMessage(message, error.message, 'error');
       await load(); // refresh seats; the tier may now be sold out
@@ -158,6 +190,11 @@ async function payBooking(payButton, cardSelect, payMessage) {
     ));
     checkoutEl.appendChild(el('p', { class: 'meta' }, el('a', { href: '/', text: 'Browse more events' })));
   } catch (error) {
+    if (error instanceof ApiError && error.code === 'UNAUTHENTICATED') {
+      showMessageWithLink(payMessage, 'Your session has expired. Please ', loginUrl(backToThisPage()), 'log in again', 'error');
+      stopCountdown();
+      return; // no point re-enabling a pay button nobody may use
+    }
     if (error instanceof ApiError && error.code === 'PAYMENT_DECLINED') {
       showMessage(payMessage, `${error.message} Try again, or pick another card.`, 'error');
     } else {
@@ -225,4 +262,5 @@ async function load() {
   renderTiers(event);
 }
 
+mountNav();
 load();

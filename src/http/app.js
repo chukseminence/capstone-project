@@ -7,8 +7,7 @@
 //   4. serve static files from public/ without letting a path escape that folder.
 //
 // Every error is the same shape: {"error":{"code","message"}}. A stack trace is
-// never sent to the client.
-
+// never sent to the client. Build 7 adds the authentication codes to the map.
 import { readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { DomainError } from '../domain/errors.js';
@@ -27,17 +26,23 @@ const MIME_TYPES = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-// DomainError code -> HTTP status. One place, so handlers just throw.
 const STATUS_BY_CODE = {
   VALIDATION: 400,
+  UNAUTHENTICATED: 401,
   UNAUTHORIZED: 401,
+  INVALID_CREDENTIALS: 401,
   PAYMENT_DECLINED: 402,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
+  EMAIL_TAKEN: 409,
   SOLD_OUT: 409,
   INVALID_STATE: 409,
   INVALID_TRANSITION: 409,
   NOT_SOLD_OUT: 409,
+  ALREADY_ON_WAITLIST: 409,
+  BOOKING_EXPIRED: 409,
+  OFFER_EXPIRED: 409,
+  EVENT_STARTED: 409,
 };
 
 function sendJson(res, status, payload) {
@@ -95,13 +100,10 @@ async function serveStatic(req, res, publicDir, pathname) {
     return true;
   }
 
-  // resolve() strips trailing separators and collapses "..", so the guard
-  // below is reliable on both Windows and POSIX.
   const root = resolve(publicDir);
   const cleaned = relative.replace(/^[/\\]+/, '');
   const target = resolve(root, cleaned === '' ? 'index.html' : cleaned);
 
-  // Never let a path escape public/ (for example ../../etc/passwd).
   if (target !== root && !target.startsWith(root + sep)) {
     sendError(res, 403, 'FORBIDDEN', 'Path is outside the public folder');
     return true;
@@ -129,19 +131,15 @@ export function createApp({ router, publicDir }) {
         const body = hasBody(req.method) ? parseJson(await readBody(req)) : undefined;
         const result = await route.handler({ req, res, params: route.params, body, query: url.searchParams });
         if (res.writableEnded) return;
-        // A handler may set res.statusCode (for example 201 after a create);
-        // it defaults to 200, so most handlers never touch it.
-        sendJson(res, res.statusCode, result === undefined ? null : result);
+        sendJson(res, res.statusCode || 200, result === undefined ? null : result);
         return;
       }
 
-      // Anything under /api that no route matched is a JSON 404.
       if (pathname === '/api' || pathname.startsWith('/api/')) {
         sendError(res, 404, 'NOT_FOUND', `No route for ${req.method} ${pathname}`);
         return;
       }
 
-      // Otherwise it might be a static file.
       if (await serveStatic(req, res, publicDir, pathname)) return;
       sendError(res, 404, 'NOT_FOUND', 'Not found');
     } catch (error) {
@@ -149,7 +147,6 @@ export function createApp({ router, publicDir }) {
         sendError(res, STATUS_BY_CODE[error.code] || 400, error.code, error.message);
         return;
       }
-      // Unknown failure: log it server-side, tell the client nothing useful.
       console.error(error);
       sendError(res, 500, 'INTERNAL', 'Something went wrong');
     }

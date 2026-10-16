@@ -56,6 +56,28 @@ body {
 
 .tagline { color: var(--muted); }
 
+/* The account links in the header, filled in by js/nav.js. */
+.account-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: .9rem;
+  flex-wrap: wrap;
+}
+
+.nav-user { color: var(--muted); font-size: .9rem; }
+
+/* A button that should look like a link (e.g. "Log out"). */
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.link-button:hover { filter: none; text-decoration: none; }
+
 main { padding-top: 2rem; padding-bottom: 2rem; }
 
 .footer {
@@ -100,7 +122,11 @@ h3 { font-size: 1.05rem; margin: 0; }
 .field label { font-weight: 600; font-size: .9rem; }
 
 input[type="search"],
+input[type="text"],
+input[type="email"],
+input[type="password"],
 input[type="number"],
+input[type="datetime-local"],
 select {
   font: inherit;
   padding: .5rem .6rem;
@@ -108,6 +134,18 @@ select {
   border-radius: 8px;
   background: #fff;
   color: var(--ink);
+}
+
+/* Plain forms inside a card (login, signup, create event) stack their fields. */
+.card form:not(.filters) .field + .field { margin-top: .85rem; }
+.card form:not(.filters) .field-submit { margin-top: 1.1rem; }
+
+/* Login and signup sit side by side until the screen is narrow. */
+.two-up {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: 1.5rem;
+  align-items: start;
 }
 
 .field-check { flex-direction: row; align-items: center; gap: .5rem; }
@@ -232,3 +270,42 @@ code {
   border-radius: 4px;
   padding: 0 .3rem;
 }
+
+/* --- Build 7 additions --- */
+
+.button-secondary {
+  background: #fff;
+  color: var(--accent);
+  border: 1px solid var(--line);
+}
+
+.badge-draft {
+  background: #fff8e6;
+  color: #8a6d1d;
+  border-color: #f1e3bd;
+}
+
+/* The organizer's list of ticket tiers. */
+.tier-list { list-style: none; margin: .6rem 0 0; padding: 0; }
+
+.tier-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .75rem;
+  padding: .35rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tier-line:last-child { border-bottom: 0; }
+.tier-name { font-weight: 600; min-width: 7rem; }
+
+.tier-add { align-items: end; }
+.tier-add .field { flex: 1 1 8rem; }
+
+/* Status lines on the login, tickets and organizer pages. */
+.status-error { color: var(--danger); }
+.status-success { color: var(--success); }
+.status-info { color: var(--muted); }
+
+.status .badge { margin-left: .5rem; }

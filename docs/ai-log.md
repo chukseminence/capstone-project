@@ -64,4 +64,57 @@ Every time you give an AI tool a significant prompt, add an entry. Three lines e
 - **What came back:** `test/frontend.test.js` (18 tests) proving a sold-out tier rejects with `SOLD_OUT`, a quantity above 10 rejects with `VALIDATION`, a declined card rejects with `PAYMENT_DECLINED` while the booking stays `pending`, and that same booking can then be paid; a live smoke test where the server served `/`, `/event.html`, the CSS and every module with the right content type and a `%2f` traversal was still refused with `403`.
 - **What was wrong (or "nothing"):** Nothing. One design note worth recording: the mock API keeps a copy of the filter/sort rules from `src/domain/eventSearch.js`, because the browser can only load modules from `public/`. That is a real duplication, not an oversight; the architecture doc says to change both if the rules change. Build 7 removes it by replacing the mock bodies with `fetch`.
 
+## Build 7
+
+### Prompt 1: Build 7 prompt (docs/build-7.md)
+
+- **What I asked:** `src/lib/password.js` (scrypt, random salt per password, constant-time compare); `src/lib/token.js` (HS256 signed tokens that expire, refusing any `alg` that is not HS256, secret from an environment variable); `src/services/authService.js` and `src/routes/auth.js` for `POST /api/auth/signup`, `POST /api/auth/login` and `GET /api/auth/me` (wrong password and unknown email give the same `INVALID_CREDENTIALS`; a repeated email gives `EMAIL_TAKEN`); `src/http/guards.js` with `requireUser` and `requireRole`, replacing the `x-user-id` header everywhere with a bearer token, plus ownership checks (an attendee sees only their own bookings; an organizer changes only their own events); the frontend moved from mock data to `fetch` with `Authorization: Bearer <token>`, with new `session.js`, `login.html`, `tickets.html` and `organizer.html` and loading/error states; tests for signup, login, bad token, expired token, wrong role and one attendee reading another's booking. Rules: never store, log or return a password, and check the role on the server, never only in the page.
+- **What came back:** All of the above. Tokens are hand-built HS256 (`header.payload.signature`, base64url, `timingSafeEqual`, `exp` required, 12-hour lifetime). Passwords are stored as `scrypt$<salt>$<key>`. The guards are the only code that reads the `Authorization` header, and every mutating service method now takes the caller's id, so ownership is enforced below the routes too. `mockData.js` and its copy of the search rules were deleted; `public/js/api.js` is now a `fetch` wrapper and `session.js` is the only module that touches `localStorage`. `test/frontend.test.js` was rewritten to stub `globalThis.fetch` and check the bearer header, the query string and the error mapping. The suite went from 74 to 82 tests, all green.
+- **What was wrong (or "nothing"):** Three things I had to decide, and one I had to fix. (1) **The prompt names `src/routes/auth.js`, but `docs/architecture.md` puts every HTTP concern under `src/http`.** I kept the architecture and put the file in `src/http/routes/auth.js`, and left a comment saying so - this is a genuine conflict in the prompt. (2) **The prompt says another person's booking should give `NOT_FOUND`, but the S13 acceptance criteria in the same build say `FORBIDDEN`.** I followed the acceptance criteria and returned `403 FORBIDDEN`; masking it as `404` would have been defensible, but the criteria are what the tests are marked against. (3) "The secret comes from an environment variable" does not say what to do when it is missing; I kept the process working by generating a random secret per process and printing a warning, so a token is never signed with a secret that ends up in git. (4) The real fix: my first cut had `GET /api/events/:id` return a bare event while the event page needs its `tiers`, and it leaked a draft to anyone who guessed an id; I added `getEventWithTiers`, which includes the tiers and returns `NOT_FOUND` for a draft unless the caller owns it.
+
+### Prompt 2: "Connect the screens and prove it end to end"
+
+- **What I asked:** Wire the existing Build 6 pages to the real API (account nav on `index.html` and `event.html`, a "log in to book" link instead of a Book button when signed out, handling `UNAUTHENTICATED` on booking and paying), add the CSS the new pages need, delete the mock data, and prove the whole flow against a running server.
+- **What came back:** The pages, the stylesheet additions (`.account-nav`, `.link-button`, `.two-way`-style `.two-up`, status/badge/tier classes), `test/frontend.test.js` rebuilt around a stubbed `fetch`, and a smoke script that drives the live server: organizer signs up, creates an event, adds a tier, publishes; a draft is `404` to a stranger and `200` to its owner; an attendee books and pays (declined then retry); a stranger is refused `403` for reading or paying that booking; `/api/bookings/me` returns only the caller's booking; every static page is served and `mockData.js` is gone.
+- **What was wrong (or "nothing"):** Two things. (1) "My tickets" only had the booking row, so every card said "Event" and "Ticket"; I added a small read-path join in `bookingService` so `/api/bookings/me` (and one booking) carry `eventTitle`, `eventCity`, `eventStartsAt` and `tierName`. That is a service composition, not a new repository join. (2) I could not click through in a real browser in this environment, so I drove the API with a script and checked every page is served; the browser click-through in the "Done when" list still needs to be done by hand before merging. (Also fixed while wiring: a duplicated block in `event.js` left two copies of the same `const`, which `node --check` caught immediately.)
+
+### Files changed in Build 7
+
+New: `src/lib/password.js`, `src/lib/token.js`, `src/services/authService.js`,
+`src/http/guards.js`, `src/http/routes/auth.js`, `public/js/session.js`,
+`public/js/nav.js`, `public/login.html`, `public/tickets.html`,
+`public/organizer.html`, `public/js/pages/login.js`, `public/js/pages/tickets.js`,
+`public/js/pages/organizer.js`, `test/auth.test.js`.
+
+Changed: `src/config.js` (token secret), `src/server.js` (guards and auth service),
+`src/http/routes.js` (guards, new endpoints, owner checks), `src/http/app.js`
+(status codes for `UNAUTHENTICATED`, `INVALID_CREDENTIALS`, `EMAIL_TAKEN`),
+`src/domain/validation.js` (`requireEmail`, `requirePassword`),
+`src/services/eventService.js` (ownership, `getEventWithTiers`,
+`listForOrganizer`, `unpublishEvent`), `src/services/bookingService.js` (owner
+checks, `getBooking`, `listForUser`, the event context on a booking read),
+`src/repositories/memory.js` and `src/repositories/sqlite.js` (users and
+`listBookingsForUser`), `public/js/api.js` (`fetch` and the bearer token),
+`public/js/pages/home.js` and `public/js/pages/event.js` (account nav and auth
+handling), `public/index.html` and `public/event.html` (account nav),
+`public/css/styles.css`, `test/api.test.js` (signup/login and bearer tokens),
+`test/frontend.test.js` (stubbed `fetch`, session tests), `docs/api-examples.md`,
+`docs/architecture.md`, `README.md`.
+
+Deleted: `public/js/mockData.js` (the server filters now, so its copy of the rules
+had to go).
+
+### Prompt rules that were unclear
+
+1. **`src/routes/auth.js` versus `src/http`.** The architecture doc says all HTTP
+   lives in `src/http`; the prompt names `src/routes/`. I kept `src/http`.
+2. **`NOT_FOUND` versus `FORBIDDEN` for someone else's booking.** The prompt says
+   `NOT_FOUND`, the S13 acceptance criteria say `FORBIDDEN`. I followed S13.
+3. **A missing `TOKEN_SECRET`.** The prompt says the secret comes from an
+   environment variable but not what to do without one; I generate a random
+   per-process secret and warn.
+4. **How long a token lives.** "Tokens expire" with no number; I chose 12 hours
+   (`DEFAULT_LIFETIME_SECONDS` in `token.js`).
+
+
 

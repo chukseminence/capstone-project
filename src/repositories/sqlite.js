@@ -1,12 +1,4 @@
-// Build 5: the SQLite repository.
-//
-// It has EXACTLY the same async methods as memory.js, so the services do not
-// change when the storage does. Every query uses ? placeholders; SQL is never
-// built by joining strings.
-//
-// Rows use snake_case columns; the domain uses camelCase. The small `rowTo...`
-// helpers do that translation so the rest of the app never sees a column name.
-
+// Build 5/7: SQLite repository with users
 import { openDatabase } from '../db/connection.js';
 
 function rowToTier(row) {
@@ -37,13 +29,31 @@ function rowToBooking(row) {
   return booking;
 }
 
+function rowToUser(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    email: row.email,
+    passwordHash: row.password_hash,
+    role: row.role,
+  };
+}
+
 export function createSqliteRepository({ db, path = ':memory:' } = {}) {
   const database = db ?? openDatabase(path);
 
-  // Prepared once. `?` placeholders keep values out of the SQL text, which is
-  // what defends against SQL injection.
   const sql = {
     insertUser: database.prepare('INSERT OR IGNORE INTO users (id) VALUES (?)'),
+    upsertUser: database.prepare(`
+      INSERT INTO users (id, email, password_hash, role)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        email = excluded.email,
+        password_hash = excluded.password_hash,
+        role = excluded.role
+    `),
+    getUserById: database.prepare('SELECT * FROM users WHERE id = ?'),
+    getUserByEmail: database.prepare('SELECT * FROM users WHERE lower(email) = lower(?)'),
 
     upsertEvent: database.prepare(`
       INSERT INTO events (id, organizer_id, title, city, venue, starts_at, status)
@@ -60,9 +70,6 @@ export function createSqliteRepository({ db, path = ':memory:' } = {}) {
     listEvents: database.prepare('SELECT * FROM events ORDER BY title, id'),
     tierIdsForEvent: database.prepare('SELECT id FROM ticket_tiers WHERE event_id = ? ORDER BY rowid'),
 
-    // Same behaviour as memory.js: saveTier writes the whole row, `sold`
-    // included. The booking flow never relies on this (it uses the atomic
-    // reserve/release below); only addTier and the oversell demo do.
     upsertTier: database.prepare(`
       INSERT INTO ticket_tiers (id, event_id, name, price_cents, capacity, sold)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -75,8 +82,6 @@ export function createSqliteRepository({ db, path = ':memory:' } = {}) {
     getTier: database.prepare('SELECT * FROM ticket_tiers WHERE id = ?'),
     listTiers: database.prepare('SELECT * FROM ticket_tiers ORDER BY rowid'),
 
-    // The atomic seat moves. The WHERE clause makes the check and the write one
-    // statement, so two callers cannot both pass the check.
     reserveSeats: database.prepare(
       'UPDATE ticket_tiers SET sold = sold + ? WHERE id = ? AND sold + ? <= capacity',
     ),
@@ -96,6 +101,7 @@ export function createSqliteRepository({ db, path = ':memory:' } = {}) {
     `),
     getBookingByReference: database.prepare('SELECT * FROM bookings WHERE reference = ?'),
     listBookings: database.prepare('SELECT * FROM bookings ORDER BY created_at, id'),
+    listBookingsForUser: database.prepare('SELECT * FROM bookings WHERE user_id = ? ORDER BY created_at, id'),
   };
 
   function findEventById(id) {
@@ -120,9 +126,20 @@ export function createSqliteRepository({ db, path = ':memory:' } = {}) {
   }
 
   return {
-    // --- events ---
+    async saveUser(user) {
+      sql.upsertUser.run(user.id, user.email || null, user.passwordHash || null, user.role || 'attendee');
+      return rowToUser(sql.getUserById.get(user.id));
+    },
+    async findUserById(id) {
+      return rowToUser(sql.getUserById.get(id));
+    },
+    async findUserByEmail(email) {
+      if (!email) return null;
+      return rowToUser(sql.getUserByEmail.get(email));
+    },
+
     async saveEvent(event) {
-      sql.insertUser.run(event.organizerId); // keep the foreign key valid
+      sql.insertUser.run(event.organizerId);
       sql.upsertEvent.run(
         event.id,
         event.organizerId,
@@ -141,7 +158,6 @@ export function createSqliteRepository({ db, path = ':memory:' } = {}) {
       return sql.listEvents.all().map((row) => findEventById(row.id));
     },
 
-    // --- ticket tiers ---
     async saveTier(tier) {
       sql.upsertTier.run(
         tier.id,
@@ -161,8 +177,6 @@ export function createSqliteRepository({ db, path = ':memory:' } = {}) {
       return sql.listTiers.all().map(rowToTier);
     },
 
-    // Reserve seats in ONE statement. `changes` is 0 when the WHERE clause did
-    // not match, which means someone else took the last seat first.
     async reserveSeats(tierId, quantity) {
       const info = sql.reserveSeats.run(quantity, tierId, quantity);
       return Number(info.changes) > 0;
@@ -172,7 +186,6 @@ export function createSqliteRepository({ db, path = ':memory:' } = {}) {
       return Number(info.changes) > 0;
     },
 
-    // --- bookings ---
     async saveBooking(booking) {
       sql.insertUser.run(booking.userId);
       sql.upsertBooking.run(
@@ -196,9 +209,10 @@ export function createSqliteRepository({ db, path = ':memory:' } = {}) {
     async listBookings() {
       return sql.listBookings.all().map(rowToBooking);
     },
+    async listBookingsForUser(userId) {
+      return sql.listBookingsForUser.all(userId).map(rowToBooking);
+    },
 
-    // Not part of the shared interface; the server and tests use it to close the
-    // handle (so a file can be deleted or re-opened cleanly).
     close() {
       database.close();
     },

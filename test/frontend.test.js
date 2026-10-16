@@ -1,26 +1,49 @@
-// Build 6: tests for the browser code that decides what the screens show.
+// Build 6/7: tests for the browser code that decides what the screens show.
 //
-// The pages themselves need a DOM, but the rules behind them (money formatting,
-// the quantity clamp and the mock API) are plain ES modules, so node:test can
-// import them straight from public/js/ and check them here.
+// The pages themselves need a DOM, but the rules behind them are plain ES
+// modules, so node:test imports them straight from public/js/. From Build 7
+// public/js/api.js is a thin `fetch` wrapper, so these tests stub
+// globalThis.fetch and check the request it would have sent and the way it
+// turns a reply (or a failure) back into data or an ApiError.
 
-import { test, beforeEach } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { formatMoney, clampQuantity, formatCountdown } from '../public/js/ui.js';
 import {
   listEvents,
-  listCities,
   getEvent,
-  createBooking,
-  pay,
-  resetMockState,
-  setMockLatency,
+  login,
+  signup,
+  myBookings,
+  logout,
+  ApiError,
 } from '../public/js/api.js';
+import {
+  getSession,
+  getUser,
+  setSession,
+  clearSession,
+  isLoggedIn,
+  loginUrl,
+} from '../public/js/session.js';
 
-beforeEach(() => {
-  resetMockState();
-  setMockLatency(0);
-});
+const SESSION = { user: { id: 'u1', email: 'ada@example.com', role: 'organizer' }, token: 'tok-9' };
+
+function json(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+beforeEach(() => clearSession());
+
+// Restore the real fetch so a later test (or a test file that shares this
+// process) is not left talking to a stub.
+const realFetch = globalThis.fetch;
+afterEach(() => { globalThis.fetch = realFetch; });
+
+// --- the pure UI rules (Build 6, still true) ---
 
 test('formatMoney shows whole cents as naira', () => {
   assert.equal(formatMoney(250000), '₦2,500');
@@ -44,120 +67,144 @@ test('formatCountdown renders mm:ss', () => {
   assert.equal(formatCountdown(-5), '00:00');
 });
 
-test('home lists only published events', async () => {
-  const events = await listEvents();
-  const titles = events.map((event) => event.title);
-  assert.equal(events.length, 5);
-  assert.ok(!titles.includes('Kano Tech Meetup'), 'a draft event must not appear');
+// --- session.js ---
+
+test('session.js stores the token and user, and logout clears them', () => {
+  assert.equal(isLoggedIn(), false);
+  assert.equal(getUser(), null);
+
+  setSession(SESSION);
+  assert.equal(isLoggedIn(), true);
+  assert.equal(getUser().email, 'ada@example.com');
+  assert.equal(getSession().token, 'tok-9');
+
+  logout();
+  assert.equal(isLoggedIn(), false);
+  assert.equal(getSession(), null);
 });
 
-test('search matches title or venue, case-insensitively', async () => {
-  const byTitle = await listEvents({ q: 'jazz' });
-  assert.deepEqual(byTitle.map((event) => event.id), ['evt-jazz']);
-
-  const byVenue = await listEvents({ q: 'shrine' });
-  assert.deepEqual(byVenue.map((event) => event.id), ['evt-jazz']);
+test('loginUrl points at the login page and remembers where to come back', () => {
+  assert.equal(loginUrl('/tickets.html'), '/login.html?next=%2Ftickets.html');
 });
 
-test('the city filter is an exact, case-insensitive match', async () => {
-  const events = await listEvents({ city: 'lagos' });
-  assert.deepEqual(events.map((event) => event.id).sort(), ['evt-jazz', 'evt-pitch']);
+// --- api.js: the request it makes ---
+
+test('a protected call sends Authorization: Bearer <token>', async () => {
+  setSession(SESSION);
+  let seen;
+  globalThis.fetch = async (url, options) => {
+    seen = { url, options };
+    return json([]);
+  };
+
+  await myBookings();
+
+  assert.equal(seen.url, '/api/bookings/me');
+  assert.equal(seen.options.headers.Authorization, 'Bearer tok-9');
 });
 
-test('the maximum price keeps events whose cheapest tier is within it', async () => {
-  const events = await listEvents({ maxPriceCents: 3000 });
-  assert.deepEqual(events.map((event) => event.id).sort(), ['evt-arts', 'evt-comedy', 'evt-pitch']);
+test('a public call is made without a session and sends no Authorization header', async () => {
+  let seen;
+  globalThis.fetch = async (url, options) => {
+    seen = { url, options };
+    return json({ id: 'evt-1', tiers: [] });
+  };
+
+  const event = await getEvent('evt-1');
+
+  assert.equal(event.id, 'evt-1');
+  assert.equal('Authorization' in seen.options.headers, false);
 });
 
-test('onlyAvailable drops sold-out events', async () => {
-  const events = await listEvents({ onlyAvailable: true });
-  const ids = events.map((event) => event.id);
-  assert.equal(ids.length, 4);
-  assert.ok(!ids.includes('evt-comedy'), 'the sold-out comedy event should be dropped');
+test('filters become a query string, and the server is asked for the rest', async () => {
+  let url;
+  globalThis.fetch = async (requestUrl) => {
+    url = requestUrl;
+    return json([{ id: 'evt-1' }]);
+  };
+
+  const events = await listEvents({
+    q: 'jazz',
+    city: 'Lagos',
+    maxPriceCents: 5000,
+    onlyAvailable: true,
+    sortBy: 'price',
+  });
+
+  assert.deepEqual(events, [{ id: 'evt-1' }]);
+  assert.equal(url, '/api/events?q=jazz&city=Lagos&maxPriceCents=5000&onlyAvailable=true&sortBy=price');
 });
 
-test('sorting by price, availability and date', async () => {
-  const byPrice = await listEvents({ sortBy: 'price' });
-  assert.deepEqual(byPrice.map((event) => event.id), ['evt-arts', 'evt-pitch', 'evt-comedy', 'evt-jazz', 'evt-rock']);
+// --- api.js: what it does with the answer ---
 
-  const byAvailability = await listEvents({ sortBy: 'availability' });
-  assert.deepEqual(byAvailability.map((event) => event.id), ['evt-arts', 'evt-rock', 'evt-jazz', 'evt-pitch', 'evt-comedy']);
+test('an API error becomes an ApiError with the code and status', async () => {
+  setSession(SESSION);
+  globalThis.fetch = async () => json({ error: { code: 'FORBIDDEN', message: 'Nope' } }, 403);
 
-  const byDate = await listEvents({ sortBy: 'date' });
-  assert.deepEqual(byDate.map((event) => event.id), ['evt-jazz', 'evt-rock', 'evt-comedy', 'evt-pitch', 'evt-arts']);
-});
-
-test('an unknown sort is refused', async () => {
-  await assert.rejects(() => listEvents({ sortBy: 'nonsense' }), (error) => {
-    assert.equal(error.code, 'VALIDATION');
+  await assert.rejects(myBookings(), (error) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.code, 'FORBIDDEN');
+    assert.equal(error.message, 'Nope');
+    assert.equal(error.status, 403);
     return true;
   });
 });
 
-test('the city list is built from published events only', async () => {
-  assert.deepEqual(await listCities(), ['Abuja', 'Enugu', 'Lagos', 'Port Harcourt']);
+test('an UNAUTHENTICATED reply drops the stored session', async () => {
+  setSession(SESSION);
+  globalThis.fetch = async () => json({ error: { code: 'UNAUTHENTICATED', message: 'nope' } }, 401);
+
+  await assert.rejects(myBookings(), (error) => error.code === 'UNAUTHENTICATED');
+  assert.equal(isLoggedIn(), false, 'a stale token is not kept');
 });
 
-test('getEvent returns the tiers with their seats left', async () => {
-  const event = await getEvent('evt-jazz');
-  assert.equal(event.title, 'Lagos Jazz Night');
-  const general = event.tiers.find((tier) => tier.id === 'tier-jazz-general');
-  const vip = event.tiers.find((tier) => tier.id === 'tier-jazz-vip');
-  assert.equal(general.seatsLeft, 88);
-  assert.equal(vip.seatsLeft, 0);
+test('a protected call with no session fails before it reaches the network', async () => {
+  let called = false;
+  globalThis.fetch = async () => { called = true; return json([]); };
+
+  await assert.rejects(myBookings(), (error) => {
+    assert.equal(error.code, 'UNAUTHENTICATED');
+    return true;
+  });
+  assert.equal(called, false);
 });
 
-test('getEvent on an unknown id is NOT_FOUND', async () => {
-  await assert.rejects(() => getEvent('nope'), (error) => {
-    assert.equal(error.code, 'NOT_FOUND');
+test('a dead server becomes a NETWORK error, not a crash', async () => {
+  globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+
+  await assert.rejects(listEvents(), (error) => {
+    assert.equal(error.code, 'NETWORK');
     return true;
   });
 });
 
-test('a sold-out tier cannot be booked', async () => {
-  await assert.rejects(() => createBooking({ tierId: 'tier-comedy-regular', quantity: 1 }), (error) => {
-    assert.equal(error.code, 'SOLD_OUT');
-    return true;
-  });
+// --- api.js: login and signup store the session ---
+
+test('login stores the session the server returns', async () => {
+  globalThis.fetch = async (url) => json(url === '/api/auth/login' ? SESSION : null);
+
+  const result = await login({ email: 'ada@example.com', password: 'password123' });
+
+  assert.equal(result.token, 'tok-9');
+  assert.equal(getUser().email, 'ada@example.com');
+  assert.equal(isLoggedIn(), true);
 });
 
-test('a quantity above 10 is refused', async () => {
-  await assert.rejects(() => createBooking({ tierId: 'tier-rock-standing', quantity: 11 }), (error) => {
-    assert.equal(error.code, 'VALIDATION');
-    return true;
-  });
-});
+test('signup sends the chosen role and surfaces EMAIL_TAKEN', async () => {
+  let body;
+  globalThis.fetch = async (url, options) => {
+    body = JSON.parse(options.body);
+    return json({ error: { code: 'EMAIL_TAKEN', message: 'taken' } }, 409);
+  };
 
-test('booking holds the seats and reduces the seats left', async () => {
-  const booking = await createBooking({ tierId: 'tier-rock-standing', quantity: 2 });
-  assert.equal(booking.status, 'pending');
-  assert.equal(booking.amountCents, 15000);
-  assert.equal(booking.reference.length, 8);
+  await assert.rejects(
+    signup({ email: 'ada@example.com', password: 'password123', role: 'organizer' }),
+    (error) => {
+      assert.equal(error.code, 'EMAIL_TAKEN');
+      return true;
+    },
+  );
 
-  const event = await getEvent('evt-rock');
-  assert.equal(event.tiers[0].seatsLeft, 198);
-});
-
-test('a declined card leaves the booking pending so it can be retried', async () => {
-  const booking = await createBooking({ tierId: 'tier-rock-standing', quantity: 1 });
-
-  await assert.rejects(() => pay({ reference: booking.reference, card: 'declined' }), (error) => {
-    assert.equal(error.code, 'PAYMENT_DECLINED');
-    return true;
-  });
-
-  // The same booking can still be paid: the mock API never un-reserved it.
-  const paid = await pay({ reference: booking.reference, card: 'ok' });
-  assert.equal(paid.status, 'paid');
-  assert.ok(paid.paymentId);
-});
-
-test('paying a booking twice is refused', async () => {
-  const booking = await createBooking({ tierId: 'tier-rock-standing', quantity: 1 });
-  await pay({ reference: booking.reference, card: 'ok' });
-
-  await assert.rejects(() => pay({ reference: booking.reference, card: 'ok' }), (error) => {
-    assert.equal(error.code, 'INVALID_TRANSITION');
-    return true;
-  });
+  assert.deepEqual(body, { email: 'ada@example.com', password: 'password123', role: 'organizer' });
+  assert.equal(isLoggedIn(), false, 'a failed signup stores nothing');
 });

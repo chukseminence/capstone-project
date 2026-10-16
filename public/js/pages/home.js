@@ -1,9 +1,12 @@
-// Build 6: the home page - browse, search, filter and sort published events.
+// Build 6/7: the home page - browse, search, filter and sort published events.
 //
-// All data comes from ../api.js; this file only touches the DOM.
+// The filter form goes to GET /api/events, which does the matching; this file
+// only turns the form into a filter object and paints the cards that come back.
+// The Build 6 mock data and its copy of the filter rules are gone.
 
 import { el, clear, formatMoney, formatDateTime } from '../ui.js';
 import { listEvents, listCities, ApiError } from '../api.js';
+import { mountNav } from '../nav.js';
 
 const form = document.getElementById('filters');
 const qInput = document.getElementById('q');
@@ -82,3 +85,4 @@ async function init() {
 }
 
 init();
+mountNav();

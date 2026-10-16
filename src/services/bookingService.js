@@ -1,7 +1,11 @@
-// Build 4: the booking rules, moved out of the route handlers.
+// Build 4/7: the booking rules.
 //
 // Receives the repository and a payment gateway. Reuses the shared state
 // machine so allowed moves between booking states are defined in one place.
+//
+// From Build 7 every method takes the caller's id. A booking belongs to the
+// person who made it: paying, cancelling or reading someone else's booking is
+// refused with FORBIDDEN, and "my bookings" only ever returns the caller's own.
 
 import { DomainError } from '../domain/errors.js';
 import { newId, referenceCode } from '../domain/ids.js';
@@ -32,9 +36,28 @@ export function createBookingService(repository, paymentGateway) {
     return reference;
   }
 
+  // A booking row only stores the tier id, but "my tickets" should say which
+  // event and tier it is for. The two READ paths below add the few fields the
+  // screen shows. This runs only for the caller's own booking, so it can never
+  // expose anyone else's data.
+  async function withEventContext(booking) {
+    const tier = await repository.findTierById(booking.tierId);
+    const event = tier ? await repository.findEventById(tier.eventId) : null;
+    return {
+      ...booking,
+      tierName: tier?.name ?? null,
+      eventId: event?.id ?? null,
+      eventTitle: event?.title ?? null,
+      eventCity: event?.city ?? null,
+      eventVenue: event?.venue ?? null,
+      eventStartsAt: event?.startsAt ?? null,
+    };
+  }
+
   return {
     async book({ tierId, userId, quantity }) {
       requireQuantity(quantity);
+      if (!userId) throw new DomainError('UNAUTHENTICATED', 'Authentication required');
 
       const tier = await repository.findTierById(tierId);
       if (!tier) throw new DomainError('NOT_FOUND', 'Ticket tier not found');
@@ -107,8 +130,22 @@ export function createBookingService(repository, paymentGateway) {
       return repository.saveBooking(booking);
     },
 
-    async getBooking(reference) {
-      return getBookingOrThrow(reference);
+    // S13: only the owner may read a booking. A caller who asks for someone
+    // else's booking is refused with FORBIDDEN, the code the acceptance criteria
+    // name, and the answer only ever carries the caller's own data.
+    async getBooking(reference, userId) {
+      const booking = await getBookingOrThrow(reference);
+      assertOwner(booking, userId);
+      return withEventContext(booking);
+    },
+
+    // The "my tickets" screen: never every booking, only the caller's.
+    async listForUser(userId) {
+      if (!userId) throw new DomainError('UNAUTHENTICATED', 'Authentication required');
+      const mine = typeof repository.listBookingsForUser === 'function'
+        ? await repository.listBookingsForUser(userId)
+        : (await repository.listBookings()).filter((booking) => booking.userId === userId);
+      return Promise.all(mine.map(withEventContext));
     },
   };
 }
