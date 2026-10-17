@@ -1,4 +1,4 @@
-# Architecture (Build 7)
+# Architecture (Build 8)
 
 This page shows how the project is organised: what each part is for, which part may talk to which, and what happens when a request arrives.
 
@@ -107,3 +107,8 @@ Pages -> `api.js` -> the REST API -> services -> data. See `docs/frontend.md`.
 - Services receive the **actor** and check it with `services/access.js` before doing anything. Routes contain no permission rules.
 - Passwords and tokens are rules-layer files (`src/auth.js`, `src/tokens.js`): pure code, no storage, easy to test.
 - The data layer gets a `users` table and owner columns. See `docs/auth.md` and `docs/database.md`.
+
+## Time, refunds and the waitlist (added in Build 8)
+- New small layers: `src/lib/` (the clock, no dependencies), `src/domain/` (pure rules like the refund policy) and `src/jobs/` (the timer that releases late bookings and offers). `test/architecture.test.js` checks who may import whom.
+- `src/services/seatService.js` has `sweep()`, the one place that expires bookings and offers and hands freed seats to the waitlist. Services call it first; `jobs/maintenance.js` calls it on a timer.
+- See `docs/refunds-and-waitlist.md`.

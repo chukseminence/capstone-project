@@ -1,4 +1,4 @@
-# The database (Build 7: schema version 2)
+# The database (Build 8: schema version 3)
 
 Data lives in one SQLite file: `data/tickets.sqlite` (the `data/` folder is **not** committed to Git).
 SQLite is built into Node (`node:sqlite`, Node 22.13 or newer), so there is nothing to install.
@@ -65,7 +65,7 @@ erDiagram
 | `events` | One row per event, with its `owner_id`. `status` is `draft` or `published`. |
 | `tiers` | The ticket types of an event, with `capacity` and `sold`. Identified by event id plus tier id. |
 | `bookings` | One row per booking, with `user_id` (who booked) and `hold_expires_at`. `status` is one of `pending`, `paid`, `cancelled`, `expired`, `refunded`. |
-| `waitlist` | People waiting for a sold-out tier. The lowest `id` is the front of the line. |
+| `waitlist` | People waiting for a sold-out tier, with `user_id`, `status` (`waiting`, `offered`, `accepted`, `expired`, `left`) and `offer_expires_at`. The lowest `id` among `waiting` is the front of the line. |
 | `counters` | The next number for `EV-000001` and `BK-000001`, so ids keep counting after a restart. |
 
 ## Rules the database enforces itself (constraints)
@@ -92,7 +92,7 @@ Every value reaches SQL through a `?`, for example `WHERE id = ?`. We never buil
 
 ## Schema version
 
-SQLite keeps a number inside the file (`PRAGMA user_version`). It is `2` now. Version 2 (Build 7) adds the `users` table and the owner, user and hold columns. A version 1 file is **upgraded automatically** the first time the server starts, keeping all data. Old events and bookings get no owner (`NULL`), so nobody can change them.
+SQLite keeps a number inside the file (`PRAGMA user_version`). It is `3` now. Version 2 (Build 7) adds the `users` table and the owner, user and hold columns. Version 3 (Build 8) adds refund columns to `bookings` (`refund_cents`, `refunded_at`) and `user_id`, `status`, `offer_expires_at` to `waitlist`. Old waitlist rows (which had no owner) are marked `left`. A version 1 or 2 file is **upgraded automatically** the first time the server starts, keeping all data. Old events and bookings get no owner (`NULL`), so nobody can change them.
 A new file gets the tables created. A file from a **newer** version of the project is refused with a clear message, so an old copy of the code can never damage a newer database. Every future change to the tables bumps this number and adds one more upgrade step.
 
 ## Where the file lives, and starting fresh

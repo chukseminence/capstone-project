@@ -331,7 +331,7 @@ for (const [label, makeStore] of [
 }
 
 describe("upgrading an old (Build 5) database file keeps its data", () => {
-  test("schema 1 -> 2: old rows survive, but nobody owns them, so nobody can change or read them", async () => {
+  test("schema 1 -> latest: old rows survive, but nobody owns them, so nobody can change or read them", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stub-migrate-"));
     const file = path.join(dir, "old.sqlite");
     const old = new DatabaseSync(file);
@@ -345,7 +345,7 @@ describe("upgrading an old (Build 5) database file keeps its data", () => {
 
     const store = createSqliteStore(file);
     const check = new DatabaseSync(file);
-    assert.equal(check.prepare("PRAGMA user_version").get().user_version, 2);
+    assert.equal(check.prepare("PRAGMA user_version").get().user_version, 3);
     check.close();
 
     const event = store.requireEvent("EV-000001");

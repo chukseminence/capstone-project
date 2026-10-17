@@ -47,6 +47,8 @@ A dash means the move is refused with `INVALID_STATE`.
 ## Rules that follow from the table
 
 - **Seats go back exactly once.** They are released only when a booking leaves a seat-holding state (pending or paid). A second cancel is refused, so it cannot release them again.
+- **A late booking expires by itself.** After `holdExpiresAt` (10 minutes) the server moves it to `expired` and frees the seats (Build 8). Paying it gives `BOOKING_EXPIRED`.
+- **Refunds** follow the policy in `docs/refunds-and-waitlist.md`.
 - **Paying a cancelled booking is refused.** The booking stays cancelled and the seats are not taken again.
 - **Paying twice is refused.**
 - **A refused move changes nothing.** The next state is worked out first. Only if the move is allowed is anything changed.

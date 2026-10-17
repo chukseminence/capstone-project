@@ -223,11 +223,11 @@ describe("SQLite: data survives a restart", () => {
 
 // ---------------------------------------------------------------------------------
 describe("SQLite: the schema version", () => {
-  test("a new file gets the newest schema version (2)", () => {
+  test("a new file gets the newest schema version (3)", () => {
     const file = newFile();
     createSqliteStore(file).close();
     const db = new DatabaseSync(file);
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 2);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
     db.close();
   });
 
@@ -511,9 +511,9 @@ describe("both stores behave the same (contract)", () => {
     attempt("pay again", () => bookings.pay("BK-000001").status);
     attempt("pay unknown", () => bookings.pay("BK-999999").status);
     attempt("book last seat", () => bookings.book(event.id, "T1", "Chi", 1).ref);
-    attempt("cancel unpaid", () => bookings.cancelUnpaid("BK-000002").booking.status);
-    attempt("cancel again", () => bookings.cancelUnpaid("BK-000002").booking.status);
-    attempt("cancel paid via API rule", () => bookings.cancelUnpaid("BK-000001").booking.status);
+    attempt("cancel unpaid", () => bookings.cancel("BK-000002").booking.status);
+    attempt("cancel again", () => bookings.cancel("BK-000002").booking.status);
+    attempt("cancel paid (refund by the policy)", () => bookings.cancel("BK-000001").booking.status);
     attempt("cancel paid (refund path)", () => bookings.cancel("BK-000001").booking.status);
     attempt("cancel unknown", () => bookings.cancel("BK-999999").booking.status);
     attempt("find", () => bookings.find("BK-000001").status);

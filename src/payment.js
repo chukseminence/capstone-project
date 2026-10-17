@@ -11,3 +11,12 @@ export function chargeMock(token = "tok_success") {
   }
   throw new DomainError("VALIDATION", 'paymentToken must be "tok_success" or "tok_declined".');
 }
+
+// S09: a MOCK refund. It only pretends to send the money back, and always works.
+// (A real gateway can fail or be slow. A real system would keep a "refund pending" state and retry.)
+export function refundMock(amountCents) {
+  if (!Number.isSafeInteger(amountCents) || amountCents < 0) {
+    throw new DomainError("VALIDATION", "A refund must be a whole number of cents, 0 or more.");
+  }
+  return { ok: true, refundedCents: amountCents };
+}

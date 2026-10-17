@@ -15,6 +15,16 @@ export async function checkoutView({ ref, announce }) {
     return { title: "Paid", element: h("p", { class: "notice", text: "Already paid. Opening your tickets…" }) };
   }
 
+  if (booking.status !== "pending") {
+    const words = booking.status === "expired" ? "The time to pay ran out, so the seats were released. Nothing was charged."
+      : booking.status === "refunded" ? "This booking was cancelled and refunded."
+      : "This booking was cancelled.";
+    return { title: "Booking closed", element: h("section", { class: "page" },
+      h("h1", { text: "Check out" }),
+      h("p", { class: "banner banner-warn", role: "status", text: words }),
+      h("p", {}, h("a", { class: "button", href: "#/" }, "Find an event"), " ", h("a", { class: "button button-quiet", href: "#/tickets" }, "My tickets"))) };
+  }
+
   const { event } = await getEvent(booking.eventId);
   const tier = event.tiers.find((t) => t.id === booking.tierId);
   const date = describeDate(event.date);
@@ -111,7 +121,7 @@ export async function checkoutView({ ref, announce }) {
         // The booking stays pending: the seats are still held, so the person can try again.
         showBanner("Your card was declined. No money was taken. Check the card details or try a different card. Your seats are still held.");
         number.focus();
-      } else if (err instanceof ApiError && err.code === "INVALID_STATE") {
+      } else if (err instanceof ApiError && (err.code === "INVALID_STATE" || err.code === "BOOKING_EXPIRED")) {
         lockForm();
       } else {
         showBanner(err instanceof ApiError ? err.message : "The payment could not be sent. Try again.");
@@ -140,8 +150,7 @@ export async function checkoutView({ ref, announce }) {
   let expired = false;
   function lockForm() {
     expired = true;
-    // Until the server releases late bookings by itself, we ask it to, so the seats really go back on sale.
-    cancelBooking(ref).catch(() => {});
+    // The server releases late bookings by itself (it enforces the hold), so we only show the message.
     for (const el of form.elements) el.disabled = true;
     cancel.hidden = true;
     form.hidden = true;

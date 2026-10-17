@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { formatMoney, nairaToCents, describeDate, ticketWord } from "../public/js/money.js";
 import { secondsLeft, formatClock, milestoneMessage } from "../public/js/countdown.js";
 import { digitsOnly, groupCardNumber, passesLuhn, validateCard } from "../public/js/card.js";
+import { REFUND_POLICY_LINES, refundMessage, refundDoneMessage, waitlistStatusWords, formatMinutesSeconds } from "../public/js/refund.js";
 import { toApiQuery } from "../public/js/views/browse.js";
 
 describe("website helpers: money", () => {
@@ -98,5 +99,31 @@ describe("website helpers: filter boxes -> API query", () => {
   test("bad input gives a message instead of a query", () => {
     assert.match(toApiQuery({ ...blank, from: "2026-12-01", to: "2026-11-01" }).problem, /end date is before/);
     assert.match(toApiQuery({ ...blank, max: "ten" }).problem, /number/);
+  });
+});
+
+describe("website helpers: refund and waitlist words", () => {
+  test("refundMessage says what the person will get back", () => {
+    assert.match(refundMessage({ paid: false, refundCents: 0, percent: 0 }, 500000), /not paid yet/);
+    assert.match(refundMessage({ paid: true, percent: 100, refundCents: 500000 }, 500000), /₦5,000 back \(all of it\)/);
+    assert.match(refundMessage({ paid: true, percent: 50, refundCents: 250000 }, 500000), /₦2,500 back \(50% of ₦5,000\)/);
+    assert.match(refundMessage({ paid: true, percent: 0, refundCents: 0 }, 500000), /nothing back/);
+    assert.match(refundMessage({ paid: true, percent: 0, refundCents: 0 }, 0), /was free/);
+    assert.match(refundMessage(null, 100), /nothing to refund/);
+  });
+  test("refundDoneMessage", () => {
+    assert.match(refundDoneMessage({ paid: true, refundCents: 150 }), /₦1.50 is on its way/);
+    assert.match(refundDoneMessage({ paid: true, refundCents: 0 }), /No refund is due/);
+    assert.match(refundDoneMessage({ paid: false }), /cancelled/);
+  });
+  test("waitlist words and clock", () => {
+    assert.equal(waitlistStatusWords({ status: "waiting", position: 3 }), "You are number 3 in line.");
+    assert.match(waitlistStatusWords({ status: "offered" }, 90), /01:30/);
+    assert.match(waitlistStatusWords({ status: "expired" }), /ran out/);
+    assert.equal(formatMinutesSeconds(905), "15:05");
+    assert.equal(formatMinutesSeconds(-3), "00:00");
+  });
+  test("the policy has one line per rule", () => {
+    assert.equal(REFUND_POLICY_LINES.length, 3);
   });
 });

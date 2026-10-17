@@ -28,16 +28,19 @@ export function createEventServiceAsOrganizer(store, options) {
   };
 }
 
+// Old tests use event dates in late 2026. A refund depends on how far away the event is, so these
+// helpers pin "now" to a day in mid 2026. Then the tests give the same answer next year as today.
+export const TEST_NOW = Date.parse("2026-06-01T12:00:00Z");
+
 export function createBookingServiceAsAttendee(store, options) {
   const att = attendeeOf(store);
-  const s = createBookingService(store, options);
+  const s = createBookingService(store, { now: () => TEST_NOW, ...options });
   return {
     ...s,
     book: (eventId, tierId, name, qty) => s.book(eventId, tierId, name, qty, att),
     find: (ref) => s.find(ref, att),
     pay: (ref, token) => s.pay(ref, token, att),
     cancel: (ref) => s.cancel(ref, att),
-    cancelUnpaid: (ref) => s.cancelUnpaid(ref, att),
   };
 }
 

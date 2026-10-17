@@ -34,7 +34,24 @@ export function presentBooking(booking) {
     totalCents: booking.totalCents,
     status: booking.status,
     holdExpiresAt: booking.holdExpiresAt ?? null,
+    refundCents: booking.refundCents ?? null,
   };
+}
+
+// A waitlist entry as its OWNER sees it. Never other people's names or ids.
+export function presentWaitlistEntry(entry) {
+  return {
+    id: entry.id,
+    eventId: entry.eventId,
+    tierId: entry.tierId,
+    status: entry.status,
+    position: entry.position ?? null,
+    offerExpiresAt: entry.offerExpiresAt ?? null,
+  };
+}
+
+export function presentRefund(refund) {
+  return { percent: refund.percent, refundCents: refund.refundCents, paid: refund.paid };
 }
 
 // Never includes the password hash. Only these four fields ever leave the server.

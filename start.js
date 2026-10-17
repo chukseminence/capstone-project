@@ -42,7 +42,8 @@ if (tokenSecret !== undefined && tokenSecret.length < 16) {
   process.exit(1);
 }
 
-const server = createServer({ publicDir, store, tokenSecret });
+// Every 15 seconds the server lets go of unpaid bookings and waitlist offers that ran out of time.
+const server = createServer({ publicDir, store, tokenSecret, maintenanceIntervalMs: 15_000 });
 
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {

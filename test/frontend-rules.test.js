@@ -36,8 +36,9 @@ describe("website rules: ALL data access lives in one file (public/js/api.js)", 
     }
   });
   test("pure helpers (money, countdown, card) do not touch the page or the data file", () => {
-    for (const name of ["money", "countdown", "card"]) {
-      const text = read(path.join(publicDir, "js", `${name}.js`));
+    for (const name of ["money", "countdown", "card", "refund"]) {
+      let text = read(path.join(publicDir, "js", `${name}.js`));
+      if (name === "refund") text = text.replace('import { formatMoney } from "./money.js";', ""); // the one allowed import: another pure helper
       assert.ok(!/\bdocument\b|\bwindow\b|\bimport\b/.test(text), `${name}.js should be plain logic`);
     }
   });

@@ -1,5 +1,5 @@
 // S06: look at one event, choose a ticket type and a quantity.
-import { getEvent, createBooking, ApiError, MAX_PER_BOOKING, currentUser } from "../api.js";
+import { getEvent, createBooking, joinWaitlist, ApiError, MAX_PER_BOOKING, currentUser } from "../api.js";
 import { h, uniqueId } from "../dom.js";
 import { formatMoney, describeDate, ticketWord } from "../money.js";
 
@@ -56,14 +56,47 @@ export async function eventView({ id }) {
     const radio = h("input", { type: "radio", id: inputId, name: radioName, value: t.id, checked: !soldOut && chosen?.id === t.id, disabled: soldOut,
       onchange: () => { chosen = t; update(); } });
     let note = null;
-    if (soldOut) note = h("span", { class: "badge badge-soldout", text: "Sold out" });
-    else if (t.seatsLeft <= 10) note = h("span", { class: "badge badge-few", text: `Only ${t.seatsLeft} left` });
+    let extra = null;
+    if (soldOut) {
+      note = h("span", { class: "badge badge-soldout", text: "Sold out" });
+      extra = waitlistControl(t);
+    } else if (t.seatsLeft <= 10) note = h("span", { class: "badge badge-few", text: `Only ${t.seatsLeft} left` });
     return h("li", { class: "tier" + (soldOut ? " is-soldout" : "") },
       radio,
       h("label", { for: inputId },
         h("span", { class: "tier-name", text: t.name }),
         h("span", { class: "tier-price", text: formatMoney(t.priceCents) })),
-      note);
+      note,
+      extra);
+  }
+
+  // S11: a sold-out ticket type can have a waitlist. Only attendees may join.
+  function waitlistControl(t) {
+    const here = encodeURIComponent(`#/event/${event.id}`);
+    if (!user) return h("p", { class: "tier-extra" }, h("a", { href: `#/login?next=${here}` }, "Log in"), " to join the waitlist.");
+    if (!canBook) return null;
+    const message = h("span", { class: "tier-extra-text", role: "status" });
+    const button = h("button", { type: "button", class: "button button-small", "aria-label": `Join the waitlist for ${t.name}` }, "Join the waitlist");
+    const done = (text) => {
+      button.hidden = true;
+      message.replaceChildren(text, " ", h("a", { href: "#/tickets" }, "See My tickets"));
+    };
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        const { entry } = await joinWaitlist({ eventId: event.id, tierId: t.id });
+        done(`You are number ${entry.position} in line.`);
+      } catch (err) {
+        button.disabled = false;
+        if (err instanceof ApiError && err.code === "ALREADY_ON_WAITLIST") done("You are already on this waitlist.");
+        else if (err instanceof ApiError && err.code === "NOT_SOLD_OUT") {
+          message.textContent = "Seats are available now. Reloading…";
+          setTimeout(() => location.reload(), 1500);
+        } else if (err instanceof ApiError && err.code === "UNAUTHENTICATED") location.hash = `#/login?next=${here}`;
+        else message.textContent = err instanceof ApiError ? err.message : "Could not join the waitlist. Try again.";
+      }
+    });
+    return h("div", { class: "tier-extra" }, button, message);
   }
 
   const tiers = h("fieldset", { class: "tiers" },
@@ -72,7 +105,7 @@ export async function eventView({ id }) {
 
   const form = h("form", { class: "booking", novalidate: true, "aria-label": "Reserve tickets" },
     tiers,
-    anyAvailable ? null : h("p", { class: "notice-sold", text: "Every ticket type is sold out. Check the other events." }),
+    anyAvailable ? null : h("p", { class: "notice-sold", text: "Every ticket type is sold out. You can join a waitlist below, or check the other events." }),
     loginNote(),
     h("div", { class: "field" }, h("label", { for: qtyId }, `Number of tickets (up to ${MAX_PER_BOOKING})`), qtyInput),
     h("div", { class: "field" }, h("label", { for: nameId }, "Name for the booking"), nameInput),

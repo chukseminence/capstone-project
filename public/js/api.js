@@ -1,8 +1,8 @@
 // ============================================================================
 // THE ONE DATA FILE.
 // Every page of the website gets its data from THIS file and nowhere else.
-// In Build 6 this file held fake data. In Build 7 the same function names now talk to the
-// REAL server with fetch("/api/..."). The pages did not have to change to get real data.
+// In Build 6 this file held fake data. In Build 7 the same function names talk to the
+// REAL server with fetch("/api/..."). Build 8 adds refunds and the waitlist.
 //
 // What lives here:
 //   - every call to the server (fetch)
@@ -210,7 +210,35 @@ export function payBooking(ref, { cardNumber }) {
   return request("POST", `/api/bookings/${encodeURIComponent(ref)}/pay`, { body: { paymentToken: cardToToken(cardNumber) } });
 }
 
-// POST /api/bookings/:ref/cancel   (unpaid bookings only)
+// GET /api/bookings/:ref/refund   "what would I get back if I cancelled now?" (changes nothing)
+// Answer: { refund: { percent, refundCents, paid } }
+export function getRefundPreview(ref) {
+  return request("GET", `/api/bookings/${encodeURIComponent(ref)}/refund`);
+}
+
+// POST /api/bookings/:ref/cancel   unpaid: seats go back. Paid: refund by the policy, seats go back.
+// Answer: { booking, refund }
 export function cancelBooking(ref) {
   return request("POST", `/api/bookings/${encodeURIComponent(ref)}/cancel`);
+}
+
+// ----------------------------------------------------------------- waitlist
+// POST /api/waitlist   join the line for a SOLD OUT ticket type.  Answer: { entry }
+export function joinWaitlist({ eventId, tierId }) {
+  return request("POST", "/api/waitlist", { body: { eventId, tierId } });
+}
+
+// GET /api/me/waitlist   my entries: waiting (with my place), offered (with a deadline), and finished ones
+export function listMyWaitlist() {
+  return request("GET", "/api/me/waitlist");
+}
+
+// POST /api/waitlist/:id/accept   take the offered seat. Answer: { booking } (pending: go and pay)
+export function acceptOffer(entryId) {
+  return request("POST", `/api/waitlist/${encodeURIComponent(entryId)}/accept`);
+}
+
+// POST /api/waitlist/:id/leave   leave the line, or turn an offer down
+export function leaveWaitlist(entryId) {
+  return request("POST", `/api/waitlist/${encodeURIComponent(entryId)}/leave`);
 }

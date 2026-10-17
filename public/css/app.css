@@ -183,3 +183,27 @@ input[aria-invalid="true"] { border-color: var(--red); background: var(--red-sof
   .field-row { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Build 8: refunds, waitlist, offers */
+.button-small { padding: 0.35rem 0.8rem; font-size: 0.9rem; }
+.button-danger { background: var(--red); border-color: var(--red); color: #fff; }
+.tier { flex-wrap: wrap; }
+.tier-extra { flex-basis: 100%; margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.tier-extra-text { font-weight: 600; }
+.refund-panel { margin-top: 0.75rem; padding: 0.9rem 1rem; border: 2px solid var(--ink); border-radius: var(--radius); background: #fff9e3; }
+.refund-panel .panel-text { margin: 0 0 0.25rem; font-weight: 600; }
+.policy { margin: 1.5rem 0 0; padding: 0.75rem 1rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.policy summary { cursor: pointer; font-weight: 700; }
+.waitlist-section { margin: 0 0 1.75rem; }
+.offers { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+.offer { border: 2px solid var(--line); border-radius: var(--radius); padding: 0.8rem 1rem; }
+.offer-offered { border-color: var(--green); background: #effaf2; }
+.offer-expired { border-style: dashed; color: #4f5763; }
+.offer h3 { margin: 0 0 0.2rem; font-size: 1.05rem; }
+.offer-line { margin: 0.3rem 0; }
+.offer-clock { font-variant-numeric: tabular-nums; font-size: 1.1rem; }
+.flash { margin: 0 0 1rem; padding: 0.6rem 0.9rem; border: 2px solid var(--green); border-radius: var(--radius); background: #effaf2; font-weight: 600; }
+.badge-refunded { background: #e8eefc; }
+.badge-expired { background: #f1f3f6; }
+/* the whole-card link on browse cards must not cover the buttons on My tickets cards */
+.ticket-actions, .refund-panel, .ticket-body .ref { position: relative; z-index: 1; }

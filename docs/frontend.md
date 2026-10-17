@@ -53,3 +53,9 @@ In Build 7 only the inside of `api.js` changed (fake data out, `fetch("/api/..."
 
 ## Safety
 Text from data is always put on the page as plain text (never `innerHTML`). The card number never leaves the browser form: `api.js` turns it into a token (`tok_success` / `tok_declined`), exactly as the real server expects. The server also sends a Content-Security-Policy and other safety headers.
+
+## Added in Build 8
+- **My tickets**: "Cancel" asks the server what you would get back (`getRefundPreview`), shows it, and only cancels after "Yes". A "Waitlist and offers" section shows your place in line, offers with a live clock, and Accept / No thanks. It refreshes every 20 seconds.
+- **Event page**: sold-out ticket types get "Join the waitlist" (logged-in attendees) or a login link.
+- **Checkout**: the server now enforces the 10 minute hold, so the page only shows the "time is up" message; it no longer cancels by itself.
+- `public/js/refund.js` holds the plain-words helpers (pure, tested in Node).

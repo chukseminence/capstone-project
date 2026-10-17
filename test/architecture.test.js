@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 //   data      src/data/*.js       keeping things. Imports rules.
 //   services  src/services/*.js   things a person does. Imports rules (the store is passed in).
 //   routes    src/routes/*.js     HTTP. Imports other routes and services (never rules or data).
+//   jobs      src/jobs/*.js       work done on a timer. Imports services.
 //   server    src/server.js       wires the layers together.
 
 const SRC = fileURLToPath(new URL("../src/", import.meta.url));
@@ -20,7 +21,8 @@ const ALLOWED = {
   data: ["rules", "data"],
   services: ["rules", "services"],
   routes: ["routes", "services"],
-  server: ["routes", "services", "data", "rules", "server"],
+  jobs: ["services", "rules", "jobs"],
+  server: ["routes", "services", "jobs", "data", "rules", "server"],
 };
 
 function listJsFiles(dir) {
@@ -33,7 +35,7 @@ function listJsFiles(dir) {
 
 function layerOf(file) {
   const parts = path.relative(SRC, file).split(path.sep);
-    if (parts.length > 1) return parts[0] === "domain" ? "rules" : parts[0]; // routes, services, data (domain counts as rules)
+  if (parts.length > 1) return parts[0] === "domain" || parts[0] === "lib" ? "rules" : parts[0]; // routes, services, data, jobs (domain and lib count as rules)
   return parts[0] === "server.js" ? "server" : "rules";
 }
 
@@ -72,7 +74,7 @@ const modules = listJsFiles(SRC).map((abs) => ({
 
 describe("architecture: the layers", () => {
   test("every layer has files in it", () => {
-    for (const layer of ["rules", "data", "services", "routes", "server"]) {
+    for (const layer of ["rules", "data", "services", "routes", "jobs", "server"]) {
       assert.ok(modules.some((m) => m.layer === layer), `no files in the ${layer} layer`);
     }
   });

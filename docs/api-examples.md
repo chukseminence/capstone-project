@@ -1,6 +1,6 @@
 # API examples
 
-Every call below is a real `curl` command that works against this project (Build 7).
+Every call below is a real `curl` command that works against this project (Build 8).
 The answers shown were captured from a real run, and `npm test` replays every one of
 them (see `test/api-examples.test.js`), so this page cannot drift from the code.
 
@@ -11,8 +11,8 @@ them (see `test/api-examples.test.js`), so this page cannot drift from the code.
    (The normal `npm start` keeps your data in a file, so ids would not start at `EV-000001` again.
    `DB_FILE=:memory:` gives a clean throw-away database.)
 2. Open a **second** Command Prompt in the same folder.
-3. Run the examples **in order, from 1 to 33**. Later examples use things made by earlier ones.
-4. Since Build 7 most calls need a **login token**. Examples 2, 3 and 23 give you tokens: copy the token from the answer and save it with `set NAME=token` as the example says. Use the **same** Command Prompt for the rest, so `%ORG%`, `%ATT%` and `%ATT2%` keep their value.
+3. Run the examples **in order, from 1 to 41**. Later examples use things made by earlier ones.
+4. Since Build 7 most calls need a **login token**. Examples 2, 3 and 24 give you tokens: copy the token from the answer and save it with `set NAME=token` as the example says. Use the **same** Command Prompt for the rest, so `%ORG%`, `%ATT%` and `%ATT2%` keep their value.
 5. Add `-i` after `curl` to also see the status line, for example `curl -i "http://localhost:3000/health"`.
 
 On Windows use `curl` in **Command Prompt**. (In PowerShell, type `curl.exe` and use `$env:ORG` instead of `%ORG%`.)
@@ -35,7 +35,7 @@ The passwords in those files are examples for practice. Never use a real passwor
 | 403 | `FORBIDDEN` | You are logged in, but your role (or ownership) does not allow this |
 | 404 | `NOT_FOUND` | No such event, tier, booking or address. Other people's bookings and drafts look like this too |
 | 405 | `METHOD_NOT_ALLOWED` | Wrong method for that address (see the `Allow` header) |
-| 409 | `SOLD_OUT`, `NOT_PUBLISHED`, `INVALID_STATE`, `ALREADY_CANCELLED`, `EMAIL_TAKEN` | The request is fine, but not allowed right now |
+| 409 | `SOLD_OUT`, `NOT_PUBLISHED`, `NOT_SOLD_OUT`, `INVALID_STATE`, `ALREADY_CANCELLED`, `EMAIL_TAKEN`, `BOOKING_EXPIRED`, `EVENT_STARTED`, `ALREADY_ON_WAITLIST`, `OFFER_EXPIRED` | The request is fine, but not allowed right now |
 | 413 | `PAYLOAD_TOO_LARGE` | The body is over 100,000 bytes |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Send JSON with `Content-Type: application/json` |
 | 503 | `BUSY` | The database stayed locked for too long. Try again. |
@@ -159,7 +159,7 @@ Expected: **201 Created**
     "title": "Lagos Jazz Night",
     "city": "Lagos",
     "venue": "Terra Kulture",
-    "date": "2026-12-05",
+    "date": "2040-12-05",
     "status": "draft",
     "tiers": []
   }
@@ -224,7 +224,7 @@ Expected: **200 OK**
     "title": "Lagos Jazz Night",
     "city": "Lagos",
     "venue": "Terra Kulture",
-    "date": "2026-12-05",
+    "date": "2040-12-05",
     "status": "published",
     "tiers": [
       {
@@ -257,7 +257,7 @@ Expected: **200 OK**
       "title": "Lagos Jazz Night",
       "city": "Lagos",
       "venue": "Terra Kulture",
-      "date": "2026-12-05",
+      "date": "2040-12-05",
       "status": "published",
       "tiers": [
         {
@@ -290,7 +290,7 @@ Expected: **200 OK**
     "title": "Lagos Jazz Night",
     "city": "Lagos",
     "venue": "Terra Kulture",
-    "date": "2026-12-05",
+    "date": "2040-12-05",
     "status": "published",
     "tiers": [
       {
@@ -307,7 +307,7 @@ Expected: **200 OK**
 
 ### 12. Book 2 of the 3 seats (S06)
 
-The booking starts `pending` and belongs to the attendee. 2 seats x 500000 = 1000000 cents. `holdExpiresAt` is when the seats stop being held (10 minutes); the server starts enforcing it in Build 8.
+The booking starts `pending` and belongs to the attendee. 2 seats x 500000 = 1000000 cents. `holdExpiresAt` is when the seats stop being held (10 minutes). After that the server lets the seats go and paying is refused with `BOOKING_EXPIRED`.
 
 ```
 curl -X POST "http://localhost:3000/api/bookings" -H "Content-Type: application/json" -H "Authorization: Bearer %ATT%" -d @docs/api-examples/new-booking.json
@@ -325,7 +325,8 @@ Expected: **201 Created**
     "quantity": 2,
     "totalCents": 1000000,
     "status": "pending",
-    "holdExpiresAt": "<time>"
+    "holdExpiresAt": "<time>",
+    "refundCents": null
   }
 }
 ```
@@ -407,7 +408,8 @@ Expected: **200 OK**
     "quantity": 2,
     "totalCents": 1000000,
     "status": "paid",
-    "holdExpiresAt": "<time>"
+    "holdExpiresAt": "<time>",
+    "refundCents": null
   }
 }
 ```
@@ -451,7 +453,8 @@ Expected: **201 Created**
     "quantity": 1,
     "totalCents": 500000,
     "status": "pending",
-    "holdExpiresAt": "<time>"
+    "holdExpiresAt": "<time>",
+    "refundCents": null
   }
 }
 ```
@@ -476,7 +479,13 @@ Expected: **200 OK**
     "quantity": 1,
     "totalCents": 500000,
     "status": "cancelled",
-    "holdExpiresAt": "<time>"
+    "holdExpiresAt": "<time>",
+    "refundCents": null
+  },
+  "refund": {
+    "percent": 0,
+    "refundCents": 0,
+    "paid": false
   }
 }
 ```
@@ -500,26 +509,58 @@ Expected: **409 Conflict**
 }
 ```
 
-### 21. Cancel a PAID booking (refused)
+### 21. What would I get back? (refund preview, S09)
 
-A paid booking needs a refund. Refunds arrive in Build 8.
+Changes nothing. The refund depends on how long is left before the event starts: **7 days or more: 100%**, **2 days or more: 50%**, **less than 2 days: 0%** (exactly 7 or 2 days counts for the better tier). This event is years away, so you get 100%. An event that has already started answers `EVENT_STARTED`.
+
+```
+curl "http://localhost:3000/api/bookings/BK-000001/refund" -H "Authorization: Bearer %ATT%"
+```
+
+Expected: **200 OK**
+
+```json
+{
+  "refund": {
+    "percent": 100,
+    "refundCents": 1000000,
+    "paid": true
+  }
+}
+```
+
+### 22. Cancel a PAID booking and get the refund (S09)
+
+The booking becomes `refunded`, the money comes back (1000000 cents) and the 2 seats go back on sale, once. Cancelling it a second time is refused with `ALREADY_CANCELLED`.
 
 ```
 curl -X POST "http://localhost:3000/api/bookings/BK-000001/cancel" -H "Authorization: Bearer %ATT%"
 ```
 
-Expected: **409 Conflict**
+Expected: **200 OK**
 
 ```json
 {
-  "error": {
-    "code": "INVALID_STATE",
-    "message": "A paid booking needs a refund. Refunds are built in Build 8."
+  "booking": {
+    "ref": "BK-000001",
+    "eventId": "EV-000001",
+    "tierId": "T1",
+    "buyerName": "Ada",
+    "quantity": 2,
+    "totalCents": 1000000,
+    "status": "refunded",
+    "holdExpiresAt": "<time>",
+    "refundCents": 1000000
+  },
+  "refund": {
+    "percent": 100,
+    "refundCents": 1000000,
+    "paid": true
   }
 }
 ```
 
-### 22. Look at your booking
+### 23. Look at your booking
 
 Only the person who made a booking can read it.
 
@@ -538,13 +579,14 @@ Expected: **200 OK**
     "buyerName": "Ada",
     "quantity": 2,
     "totalCents": 1000000,
-    "status": "paid",
-    "holdExpiresAt": "<time>"
+    "status": "refunded",
+    "holdExpiresAt": "<time>",
+    "refundCents": 1000000
   }
 }
 ```
 
-### 23. Sign up a second attendee
+### 24. Sign up a second attendee
 
 Save this token as `ATT2`: `set ATT2=` followed by the token.
 
@@ -566,7 +608,7 @@ Expected: **201 Created**
 }
 ```
 
-### 24. The second attendee asks for Ada's booking (refused)
+### 25. The second attendee asks for Ada's booking (refused)
 
 Privacy (S13). The answer is `NOT_FOUND`, exactly like a booking that does not exist, so nobody can even find out which codes are real.
 
@@ -585,7 +627,7 @@ Expected: **404 Not Found**
 }
 ```
 
-### 25. My tickets (S13)
+### 26. My tickets (S13)
 
 Only your own bookings, newest first.
 
@@ -606,7 +648,8 @@ Expected: **200 OK**
       "quantity": 1,
       "totalCents": 500000,
       "status": "cancelled",
-      "holdExpiresAt": "<time>"
+      "holdExpiresAt": "<time>",
+      "refundCents": null
     },
     {
       "ref": "BK-000001",
@@ -615,14 +658,184 @@ Expected: **200 OK**
       "buyerName": "Ada",
       "quantity": 2,
       "totalCents": 1000000,
-      "status": "paid",
-      "holdExpiresAt": "<time>"
+      "status": "refunded",
+      "holdExpiresAt": "<time>",
+      "refundCents": 1000000
     }
   ]
 }
 ```
 
-### 26. An attendee tries to publish the event (refused)
+### 27. Join the waitlist while seats are left (refused, S11)
+
+The waitlist is only for **sold-out** tiers. While seats are left you should simply book.
+
+```
+curl -X POST "http://localhost:3000/api/waitlist" -H "Content-Type: application/json" -H "Authorization: Bearer %ATT2%" -d @docs/api-examples/waitlist-join.json
+```
+
+Expected: **409 Conflict**
+
+```json
+{
+  "error": {
+    "code": "NOT_SOLD_OUT",
+    "message": "Regular still has 3 seats. Book instead of waiting."
+  }
+}
+```
+
+### 28. Book all 3 seats, so the tier sells out
+
+Now there is nothing left to buy.
+
+```
+curl -X POST "http://localhost:3000/api/bookings" -H "Content-Type: application/json" -H "Authorization: Bearer %ATT%" -d @docs/api-examples/new-booking-all.json
+```
+
+Expected: **201 Created**
+
+```json
+{
+  "booking": {
+    "ref": "BK-000003",
+    "eventId": "EV-000001",
+    "tierId": "T1",
+    "buyerName": "Ada",
+    "quantity": 3,
+    "totalCents": 1500000,
+    "status": "pending",
+    "holdExpiresAt": "<time>",
+    "refundCents": null
+  }
+}
+```
+
+### 29. Join the waitlist (S11)
+
+You join the **end of the line**. `position` 1 means you are next.
+
+```
+curl -X POST "http://localhost:3000/api/waitlist" -H "Content-Type: application/json" -H "Authorization: Bearer %ATT2%" -d @docs/api-examples/waitlist-join.json
+```
+
+Expected: **201 Created**
+
+```json
+{
+  "entry": {
+    "id": 1,
+    "eventId": "EV-000001",
+    "tierId": "T1",
+    "status": "waiting",
+    "position": 1,
+    "offerExpiresAt": null
+  }
+}
+```
+
+### 30. Join it a second time (refused)
+
+One place in line per person and tier.
+
+```
+curl -X POST "http://localhost:3000/api/waitlist" -H "Content-Type: application/json" -H "Authorization: Bearer %ATT2%" -d @docs/api-examples/waitlist-join.json
+```
+
+Expected: **409 Conflict**
+
+```json
+{
+  "error": {
+    "code": "ALREADY_ON_WAITLIST",
+    "message": "You are already on the waitlist for Regular."
+  }
+}
+```
+
+### 31. Cancel the booking: the seat is OFFERED (S12)
+
+The freed seats go to the **first person in line**, never to somebody who just arrived. (The answer never says who was offered the seat.)
+
+```
+curl -X POST "http://localhost:3000/api/bookings/BK-000003/cancel" -H "Authorization: Bearer %ATT%"
+```
+
+Expected: **200 OK**
+
+```json
+{
+  "booking": {
+    "ref": "BK-000003",
+    "eventId": "EV-000001",
+    "tierId": "T1",
+    "buyerName": "Ada",
+    "quantity": 3,
+    "totalCents": 1500000,
+    "status": "cancelled",
+    "holdExpiresAt": "<time>",
+    "refundCents": null
+  },
+  "refund": {
+    "percent": 0,
+    "refundCents": 0,
+    "paid": false
+  }
+}
+```
+
+### 32. See my waitlist and offers
+
+The status changed from `waiting` to `offered`. `offerExpiresAt` is the deadline (15 minutes). The seat is **held** for you until then: nobody else can buy it. If you do nothing, the offer runs out and the seat passes to the next person.
+
+```
+curl "http://localhost:3000/api/me/waitlist" -H "Authorization: Bearer %ATT2%"
+```
+
+Expected: **200 OK**
+
+```json
+{
+  "entries": [
+    {
+      "id": 1,
+      "eventId": "EV-000001",
+      "tierId": "T1",
+      "status": "offered",
+      "position": null,
+      "offerExpiresAt": "<time>"
+    }
+  ]
+}
+```
+
+### 33. Accept the offer (S12)
+
+The held seat becomes a `pending` booking for you. Pay for it within its hold time. After the deadline this answers `OFFER_EXPIRED`.
+
+```
+curl -X POST "http://localhost:3000/api/waitlist/1/accept" -H "Authorization: Bearer %ATT2%"
+```
+
+Expected: **201 Created**
+
+```json
+{
+  "booking": {
+    "ref": "BK-000004",
+    "eventId": "EV-000001",
+    "tierId": "T1",
+    "buyerName": "Bayo Buyer",
+    "quantity": 1,
+    "totalCents": 500000,
+    "status": "pending",
+    "holdExpiresAt": "<time>",
+    "refundCents": null
+  }
+}
+```
+
+### 34. An attendee tries to publish the event (refused)
 
 Wrong role: **403**. (An organizer who does not own the event gets 403 too. Someone else's draft looks like it does not exist: 404.)
 
@@ -641,7 +854,7 @@ Expected: **403 Forbidden**
 }
 ```
 
-### 27. Log in with the wrong password
+### 35. Log in with the wrong password
 
 The answer is the same for a wrong password and for an email nobody signed up with, so nobody can use login to find out who has an account.
 
@@ -660,7 +873,7 @@ Expected: **401 Unauthorized**
 }
 ```
 
-### 28. Log in again
+### 36. Log in again
 
 Tokens stop working after 2 hours. Log in again to get a new one. (This one is not needed for the next examples.)
 
@@ -682,7 +895,7 @@ Expected: **200 OK**
 }
 ```
 
-### 29. Who am I?
+### 37. Who am I?
 
 Your account, never your password or its hash.
 
@@ -703,7 +916,7 @@ Expected: **200 OK**
 }
 ```
 
-### 30. Unpublish the event
+### 38. Unpublish the event
 
 It goes back to `draft`.
 
@@ -720,7 +933,7 @@ Expected: **200 OK**
     "title": "Lagos Jazz Night",
     "city": "Lagos",
     "venue": "Terra Kulture",
-    "date": "2026-12-05",
+    "date": "2040-12-05",
     "status": "draft",
     "tiers": [
       {
@@ -728,14 +941,14 @@ Expected: **200 OK**
         "name": "Regular",
         "priceCents": 500000,
         "capacity": 3,
-        "seatsLeft": 1
+        "seatsLeft": 2
       }
     ]
   }
 }
 ```
 
-### 31. Search again: the draft is hidden
+### 39. Search again: the draft is hidden
 
 No matches is not an error. You get an empty list.
 
@@ -751,7 +964,7 @@ Expected: **200 OK**
 }
 ```
 
-### 32. Ask for an event that does not exist
+### 40. Ask for an event that does not exist
 
 Every error has the same shape: `{ "error": { "code", "message" } }`.
 
@@ -770,7 +983,7 @@ Expected: **404 Not Found**
 }
 ```
 
-### 33. Send broken JSON
+### 41. Send broken JSON
 
 The file `bad-json.json` is cut off on purpose.
 

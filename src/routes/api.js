@@ -1,7 +1,7 @@
 import { sendJson, sendError } from "./respond.js";
 import { sendCaughtError, HttpProblem } from "./errors.js";
 import { readJsonBody } from "./body.js";
-import { presentEvent, presentTier, presentBooking, presentUser } from "./present.js";
+import { presentEvent, presentTier, presentBooking, presentUser, presentWaitlistEntry, presentRefund } from "./present.js";
 import { DomainError } from "../services/errors.js";
 import { requireLogin } from "../services/access.js";
 
@@ -44,8 +44,13 @@ function readSearchQuery(searchParams) {
   return { filters, sort: get("sort"), order: get("order") };
 }
 
+// "12" -> 12. Anything else cannot be an entry id, so it is simply "not found" (never a crash).
+function entryIdOf(text) {
+  return /^\d{1,12}$/.test(text) ? Number(text) : -1;
+}
+
 export function createApiHandler({ services }) {
-  const { events, bookings, auth } = services;
+  const { events, bookings, waitlist, auth } = services;
 
   // The route table: method + pattern -> what to do.
   // Each handler returns { status, body, headers? }.
@@ -177,14 +182,52 @@ export function createApiHandler({ services }) {
       },
     },
     {
+      method: "GET",
+      pattern: "/api/bookings/:ref/refund",
+      auth: "required",
+      // "If I cancel now, what do I get back?" Changes nothing.
+      run: ({ params, actor }) => ({ status: 200, body: { refund: presentRefund(bookings.refundPreview(params.ref, actor)) } }),
+    },
+    {
       method: "POST",
       pattern: "/api/bookings/:ref/cancel",
       auth: "required",
       run: ({ params, actor }) => {
-        // Never send back the waitlist hand-over: it holds other people's names.
-        const { booking } = bookings.cancelUnpaid(params.ref, actor);
-        return { status: 200, body: { booking: presentBooking(booking) } };
+        // Never send back who was offered the freed seat: that is another person's business.
+        const { booking, refund } = bookings.cancel(params.ref, actor);
+        return { status: 200, body: { booking: presentBooking(booking), refund: presentRefund(refund) } };
       },
+    },
+    {
+      method: "POST",
+      pattern: "/api/waitlist",
+      auth: "required",
+      run: async ({ req, actor }) => {
+        const { eventId, tierId } = await readJsonBody(req);
+        const entry = waitlist.join(eventId, tierId, actor);
+        return { status: 201, headers: { Location: `/api/me/waitlist` }, body: { entry: presentWaitlistEntry(entry) } };
+      },
+    },
+    {
+      method: "GET",
+      pattern: "/api/me/waitlist",
+      auth: "required",
+      run: ({ actor }) => ({ status: 200, body: { entries: waitlist.listMine(actor).map(presentWaitlistEntry) } }),
+    },
+    {
+      method: "POST",
+      pattern: "/api/waitlist/:id/accept",
+      auth: "required",
+      run: ({ params, actor }) => {
+        const booking = waitlist.accept(entryIdOf(params.id), actor);
+        return { status: 201, headers: { Location: `/api/bookings/${booking.ref}` }, body: { booking: presentBooking(booking) } };
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/api/waitlist/:id/leave",
+      auth: "required",
+      run: ({ params, actor }) => ({ status: 200, body: { entry: presentWaitlistEntry(waitlist.leave(entryIdOf(params.id), actor)) } }),
     },
   ].map((r) => ({ ...r, parts: r.pattern.split("/") }));
 

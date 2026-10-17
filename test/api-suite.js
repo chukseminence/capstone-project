@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../src/server.js";
 import { STATUS_BY_CODE } from "../src/routes/errors.js";
+import { createFakeClock } from "../src/lib/clock.js";
 
 const publicDir = fileURLToPath(new URL("../public", import.meta.url));
 const SRC = fileURLToPath(new URL("../src/", import.meta.url));
@@ -21,19 +22,23 @@ export function defineApiTests(label, makeStore) {
     // Since Build 7 most calls need a login. Every test starts with one organizer and one attendee,
     // made through the real signup call, and `call` sends the right token by itself (see `as` below).
     let tokens;
+    // The server's clock is a FAKE one, standing still in mid 2026. The events in these tests are in
+    // December 2026, so refunds are the same today as next year, and a test can jump forward in time.
+    let clock;
 
     beforeEach(async () => {
       store = makeStore();
+      clock = createFakeClock("2026-06-01T12:00:00Z");
       // A cheap password hash keeps the tests fast. (Real servers use the strong default.)
-      server = createServer({ publicDir, store, hashCost: { N: 1024, r: 8, p: 1 } });
+      server = createServer({ publicDir, store, clock, hashCost: { N: 1024, r: 8, p: 1 } });
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       base = `http://127.0.0.1:${server.address().port}`;
       tokens = {};
-      for (const [who, role] of [["org", "organizer"], ["att", "attendee"]]) {
+      for (const [who, role, email] of [["org", "organizer", "organizer@example.com"], ["att", "attendee", "attendee@example.com"], ["att2", "attendee", "attendee2@example.com"]]) {
         const res = await fetch(base + "/api/auth/signup", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: `Test ${role}`, email: `${role}@example.com`, password: "correct horse battery", role }),
+          body: JSON.stringify({ name: `Test ${who}`, email, password: "correct horse battery", role }),
         });
         tokens[who] = (await res.json()).token;
       }
@@ -51,7 +56,7 @@ export function defineApiTests(label, makeStore) {
     // The default picks the person the old (pre-login) tests meant: attendee for bookings, organizer otherwise.
     async function call(method, url, { body, raw, type = "application/json", as, token } = {}) {
       const init = { method, headers: {} };
-      const who = as ?? (url.startsWith("/api/bookings") ? "att" : url.startsWith("/api/auth") ? "anon" : url === "/api/events" && method === "GET" ? "anon" : "org");
+      const who = as ?? (url.startsWith("/api/bookings") || url.startsWith("/api/waitlist") || url.startsWith("/api/me/waitlist") ? "att" : url.startsWith("/api/auth") ? "anon" : url === "/api/events" && method === "GET" ? "anon" : "org");
       if (token !== undefined) init.headers.Authorization = `Bearer ${token}`;
       else if (who !== "anon") init.headers.Authorization = `Bearer ${tokens[who]}`;
       if (body !== undefined) {
@@ -264,10 +269,10 @@ export function defineApiTests(label, makeStore) {
           quantity: 2,
           totalCents: 1000000,
           status: "pending",
+          refundCents: null,
         });
-        // The hold deadline is about 10 minutes from now (Build 8 makes the server enforce it).
-        const minutes = (Date.parse(holdExpiresAt) - Date.now()) / 60000;
-        assert.ok(minutes > 9.5 && minutes <= 10.01, `hold should be 10 minutes, got ${minutes}`);
+        // The hold deadline is exactly 10 minutes from now (the test clock stands still).
+        assert.equal(Date.parse(holdExpiresAt) - clock.now(), 10 * 60_000);
         const event = await call("GET", `/api/events/${eventId}`);
         assert.equal(event.json.event.tiers[0].seatsLeft, 1);
       });
@@ -372,7 +377,8 @@ export function defineApiTests(label, makeStore) {
         const res = await call("POST", `/api/bookings/${ref}/cancel`);
         assert.equal(res.status, 200);
         assert.equal(res.json.booking.status, "cancelled");
-        assert.deepEqual(Object.keys(res.json), ["booking"]);
+        assert.deepEqual(Object.keys(res.json), ["booking", "refund"]);
+        assert.deepEqual(res.json.refund, { percent: 0, refundCents: 0, paid: false });
         assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 3);
       });
 
@@ -383,17 +389,281 @@ export function defineApiTests(label, makeStore) {
         assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 3);
       });
 
-      test("a paid booking cannot be cancelled here: INVALID_STATE, still paid", async () => {
-        const { ref } = await pendingBooking();
+      test("a paid booking is cancelled WITH a refund by the policy (event is months away: 100%)", async () => {
+        const { eventId, ref } = await pendingBooking(); // 2 tickets x N5,000
         await call("POST", `/api/bookings/${ref}/pay`);
         const res = await call("POST", `/api/bookings/${ref}/cancel`);
-        assertErrorShape(res, 409, "INVALID_STATE");
-        assert.match(res.json.error.message, /refund/i);
-        assert.equal((await call("GET", `/api/bookings/${ref}`)).json.booking.status, "paid");
+        assert.equal(res.status, 200, res.text);
+        assert.equal(res.json.booking.status, "refunded");
+        assert.equal(res.json.booking.refundCents, 1000000);
+        assert.deepEqual(res.json.refund, { percent: 100, refundCents: 1000000, paid: true });
+        assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 3);
+        assertErrorShape(await call("POST", `/api/bookings/${ref}/cancel`), 409, "ALREADY_CANCELLED");
+        assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 3);
       });
 
       test("cancel a missing booking is 404", async () => {
         assertErrorShape(await call("POST", "/api/bookings/BK-999999/cancel"), 404, "NOT_FOUND");
+      });
+    });
+
+    // ---- Build 8: refunds, expiry, waitlist ----
+    // A login lasts 2 hours. When a test jumps the clock far ahead, the old logins would have expired,
+    // so after every jump everybody logs in again (through the real login call).
+    const LOGINS = { org: "organizer@example.com", att: "attendee@example.com", att2: "attendee2@example.com" };
+    async function relogin() {
+      for (const [who, email] of Object.entries(LOGINS)) {
+        const res = await fetch(base + "/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: "correct horse battery" }),
+        });
+        tokens[who] = (await res.json()).token;
+      }
+    }
+    async function moveClockTo(ms) {
+      clock.set(ms);
+      await relogin();
+    }
+    async function moveClockBy(ms) {
+      clock.advance(ms);
+      await relogin();
+    }
+
+    const DAY = 24 * 60 * 60 * 1000;
+    const MINUTE = 60 * 1000;
+    const EVENT_START = Date.parse("2026-12-05T00:00:00Z"); // newEvent.date
+
+    describe("API: refunds (S09)", () => {
+      async function paidBooking(quantity = 2) {
+        const { eventId, tierId } = await publishedEvent({ capacity: 5, priceCents: 500000 });
+        const b = await call("POST", "/api/bookings", { body: { eventId, tierId, buyerName: "Ada", quantity } });
+        const ref = b.json.booking.ref;
+        await call("POST", `/api/bookings/${ref}/pay`);
+        return { eventId, ref };
+      }
+
+      test("the preview says what you would get back, and changes nothing", async () => {
+        const { eventId, ref } = await paidBooking(2);
+        await moveClockTo(EVENT_START - 3 * DAY);
+        const res = await call("GET", `/api/bookings/${ref}/refund`);
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.json, { refund: { percent: 50, refundCents: 500000, paid: true } });
+        assert.equal((await call("GET", `/api/bookings/${ref}`)).json.booking.status, "paid");
+        assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 3);
+      });
+
+      for (const [label, msBefore, percent, cents] of [
+        ["exactly 7 days", 7 * DAY, 100, 1000000],
+        ["6 days 23 hours", 7 * DAY - 60 * MINUTE, 50, 500000],
+        ["exactly 2 days", 2 * DAY, 50, 500000],
+        ["1 day 23 hours", 2 * DAY - 60 * MINUTE, 0, 0],
+      ]) {
+        test(`cancel ${label} before the start: ${percent}% back, 2 seats released`, async () => {
+          const { eventId, ref } = await paidBooking(2);
+          await moveClockTo(EVENT_START - msBefore);
+          const res = await call("POST", `/api/bookings/${ref}/cancel`);
+          assert.equal(res.status, 200, res.text);
+          assert.deepEqual(res.json.refund, { percent, refundCents: cents, paid: true });
+          assert.equal(res.json.booking.status, "refunded");
+          assert.equal(res.json.booking.refundCents, cents);
+          assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 5);
+        });
+      }
+
+      test("an event that has started: 409 EVENT_STARTED, and the booking stays paid", async () => {
+        const { eventId, ref } = await paidBooking(2);
+        await moveClockTo(EVENT_START);
+        assertErrorShape(await call("GET", `/api/bookings/${ref}/refund`), 409, "EVENT_STARTED");
+        assertErrorShape(await call("POST", `/api/bookings/${ref}/cancel`), 409, "EVENT_STARTED");
+        assert.equal((await call("GET", `/api/bookings/${ref}`)).json.booking.status, "paid");
+        assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 3);
+      });
+
+      test("cancelling twice: 409 ALREADY_CANCELLED, seats released once; the preview is refused too", async () => {
+        const { eventId, ref } = await paidBooking(2);
+        assert.equal((await call("POST", `/api/bookings/${ref}/cancel`)).status, 200);
+        assertErrorShape(await call("POST", `/api/bookings/${ref}/cancel`), 409, "ALREADY_CANCELLED");
+        assertErrorShape(await call("GET", `/api/bookings/${ref}/refund`), 409, "ALREADY_CANCELLED");
+        assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 5);
+      });
+
+      test("somebody else's booking: 404 for preview and cancel; nobody logged in: 401", async () => {
+        const { ref } = await paidBooking(1);
+        assertErrorShape(await call("GET", `/api/bookings/${ref}/refund`, { token: tokens.att2 }), 404, "NOT_FOUND");
+        assertErrorShape(await call("POST", `/api/bookings/${ref}/cancel`, { token: tokens.att2 }), 404, "NOT_FOUND");
+        assertErrorShape(await call("GET", `/api/bookings/${ref}/refund`, { as: "anon" }), 401, "UNAUTHENTICATED");
+        assertErrorShape(await call("POST", `/api/bookings/${ref}/cancel`, { as: "anon" }), 401, "UNAUTHENTICATED");
+        assert.equal((await call("GET", `/api/bookings/${ref}`)).json.booking.status, "paid");
+      });
+
+      test("the preview of an unpaid booking: nothing was paid, nothing comes back", async () => {
+        const { eventId, tierId } = await publishedEvent();
+        const b = await call("POST", "/api/bookings", { body: { eventId, tierId, buyerName: "Ada", quantity: 1 } });
+        assert.deepEqual((await call("GET", `/api/bookings/${b.json.booking.ref}/refund`)).json, { refund: { percent: 0, refundCents: 0, paid: false } });
+      });
+
+      test("the refund routes only allow their own method", async () => {
+        const { ref } = await paidBooking(1);
+        assertErrorShape(await call("POST", `/api/bookings/${ref}/refund`), 405, "METHOD_NOT_ALLOWED");
+      });
+    });
+
+    describe("API: unpaid bookings expire (S10)", () => {
+      async function pending(capacity = 3, quantity = 2) {
+        const { eventId, tierId } = await publishedEvent({ capacity });
+        const b = await call("POST", "/api/bookings", { body: { eventId, tierId, buyerName: "Ada", quantity } });
+        return { eventId, tierId, ref: b.json.booking.ref };
+      }
+
+      test("after the hold the booking is expired, the seats are back, and paying is 409 BOOKING_EXPIRED", async () => {
+        const { eventId, ref } = await pending(3, 2);
+        await moveClockBy(10 * MINUTE);
+        assert.equal((await call("GET", `/api/bookings/${ref}`)).json.booking.status, "expired");
+        assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 3);
+        assertErrorShape(await call("POST", `/api/bookings/${ref}/pay`), 409, "BOOKING_EXPIRED");
+        assert.equal((await call("GET", `/api/bookings/${ref}`)).json.booking.status, "expired");
+      });
+
+      test("one minute before the hold ends, paying still works", async () => {
+        const { ref } = await pending();
+        await moveClockBy(9 * MINUTE);
+        assert.equal((await call("POST", `/api/bookings/${ref}/pay`)).json.booking.status, "paid");
+      });
+
+      test("the maintenance job does the same on its own", async () => {
+        const { eventId, ref } = await pending(3, 2);
+        await moveClockBy(11 * MINUTE);
+        assert.deepEqual(server.maintenance.run().expiredBookings, [ref]);
+        assert.deepEqual(server.maintenance.run().expiredBookings, [], "nothing left to do the second time");
+        assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 3);
+      });
+
+      test("a paid booking never expires", async () => {
+        const { ref } = await pending();
+        await call("POST", `/api/bookings/${ref}/pay`);
+        await moveClockBy(30 * DAY);
+        server.maintenance.run();
+        assert.equal((await call("GET", `/api/bookings/${ref}`)).json.booking.status, "paid");
+      });
+
+      test("my tickets shows the expired booking as expired", async () => {
+        await pending();
+        await moveClockBy(10 * MINUTE);
+        assert.equal((await call("GET", "/api/me/bookings", { as: "att" })).json.bookings[0].status, "expired");
+      });
+    });
+
+    describe("API: the waitlist (S11, S12)", () => {
+      // A published tier with 2 seats, fully booked by att, so it is SOLD OUT.
+      async function soldOut() {
+        const { eventId, tierId } = await publishedEvent({ capacity: 2 });
+        const b = await call("POST", "/api/bookings", { body: { eventId, tierId, buyerName: "Ada", quantity: 2 } });
+        return { eventId, tierId, ref: b.json.booking.ref };
+      }
+      const join = (eventId, tierId, token = tokens.att2) => call("POST", "/api/waitlist", { body: { eventId, tierId }, token });
+
+      test("join: 201, you are at the end of the line, and the answer shows only your own entry", async () => {
+        const { eventId, tierId } = await soldOut();
+        const res = await join(eventId, tierId);
+        assert.equal(res.status, 201, res.text);
+        assert.deepEqual(res.json, { entry: { id: 1, eventId, tierId, status: "waiting", position: 1, offerExpiresAt: null } });
+        const mine = await call("GET", "/api/me/waitlist", { token: tokens.att2 });
+        assert.deepEqual(mine.json.entries.map((e) => e.status), ["waiting"]);
+        assert.deepEqual((await call("GET", "/api/me/waitlist")).json, { entries: [] }, "Ada sees nothing of Test att2's entry");
+      });
+
+      test("a tier with seats left: 409 NOT_SOLD_OUT. Joining twice: 409 ALREADY_ON_WAITLIST", async () => {
+        const open = await publishedEvent({ capacity: 5 });
+        assertErrorShape(await join(open.eventId, open.tierId), 409, "NOT_SOLD_OUT");
+        const { eventId, tierId } = await soldOut();
+        await join(eventId, tierId);
+        assertErrorShape(await join(eventId, tierId), 409, "ALREADY_ON_WAITLIST");
+      });
+
+      test("who may join: nobody logged in 401, an organizer 403, bad input 400, unknown tier 404, draft 409", async () => {
+        const { eventId, tierId } = await soldOut();
+        assertErrorShape(await call("POST", "/api/waitlist", { body: { eventId, tierId }, as: "anon" }), 401, "UNAUTHENTICATED");
+        assertErrorShape(await call("POST", "/api/waitlist", { body: { eventId, tierId }, as: "org" }), 403, "FORBIDDEN");
+        assertErrorShape(await call("POST", "/api/waitlist", { body: {}, token: tokens.att2 }), 400, "VALIDATION");
+        assertErrorShape(await join(eventId, "T99"), 404, "NOT_FOUND");
+        await call("POST", `/api/events/${eventId}/unpublish`);
+        assertErrorShape(await join(eventId, tierId), 409, "NOT_PUBLISHED");
+      });
+
+      test("a freed seat is offered to the first in line; accepting it makes a pending booking", async () => {
+        const { eventId, tierId, ref } = await soldOut();
+        await join(eventId, tierId);
+        const cancel = await call("POST", `/api/bookings/${ref}/cancel`);
+        assert.equal(cancel.status, 200);
+        assert.deepEqual(Object.keys(cancel.json).sort(), ["booking", "refund"], "the answer never says who was offered the seat");
+
+        const offer = (await call("GET", "/api/me/waitlist", { token: tokens.att2 })).json.entries[0];
+        assert.equal(offer.status, "offered");
+        assert.equal(Date.parse(offer.offerExpiresAt) - clock.now(), 15 * MINUTE);
+        const left = (await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft;
+        assert.equal(left, 1, "2 seats were freed: 1 is held for the offer, 1 is really free");
+
+        const accepted = await call("POST", `/api/waitlist/${offer.id}/accept`, { token: tokens.att2 });
+        assert.equal(accepted.status, 201, accepted.text);
+        assert.match(accepted.headers.get("location"), /^\/api\/bookings\/BK-\d{6}$/);
+        assert.equal(accepted.json.booking.status, "pending");
+        assert.equal(accepted.json.booking.quantity, 1);
+        const paid = await call("POST", `/api/bookings/${accepted.json.booking.ref}/pay`, { token: tokens.att2 });
+        assert.equal(paid.json.booking.status, "paid");
+        assert.equal((await call("GET", "/api/me/waitlist", { token: tokens.att2 })).json.entries[0].status, "accepted");
+      });
+
+      test("an offer that is not accepted in time: OFFER_EXPIRED, and the seat moves on", async () => {
+        const { eventId, tierId, ref } = await soldOut();
+        await join(eventId, tierId, tokens.att2);
+        await call("POST", `/api/bookings/${ref}/cancel`);
+        const entryId = (await call("GET", "/api/me/waitlist", { token: tokens.att2 })).json.entries[0].id;
+        await moveClockBy(15 * MINUTE);
+        assertErrorShape(await call("POST", `/api/waitlist/${entryId}/accept`, { token: tokens.att2 }), 409, "OFFER_EXPIRED");
+        assert.equal((await call("GET", "/api/me/waitlist", { token: tokens.att2 })).json.entries[0].status, "expired");
+        assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 2, "no one is waiting, so both seats are free");
+      });
+
+      test("an offer passes down the line: A is skipped after 15 minutes, B is offered", async () => {
+        const { eventId, tierId, ref } = await soldOut();
+        const a = await join(eventId, tierId, tokens.att2);
+        // a second waiting attendee: the first attendee, after cancelling, rejoins behind them
+        await call("POST", `/api/bookings/${ref}/cancel`); // A is offered 1 seat (2 freed, so 1 offer + 1 free)
+        const filler = await call("POST", "/api/bookings", { body: { eventId, tierId, buyerName: "Ada", quantity: 1 } });
+        assert.equal(filler.status, 201); // takes the really free seat; the tier is sold out again (held offer + filler)
+        const b = await join(eventId, tierId, tokens.att);
+        assert.equal(b.json.entry.position, 1);
+        await moveClockBy(15 * MINUTE);
+        server.maintenance.run();
+        assert.equal((await call("GET", "/api/me/waitlist", { token: tokens.att2 })).json.entries[0].status, "expired");
+        assert.equal((await call("GET", "/api/me/waitlist", { token: tokens.att })).json.entries[0].status, "offered");
+        assert.equal(a.status, 201);
+      });
+
+      test("somebody else's entry: 404 to accept or leave; an entry with no offer yet: 409; a bad id: 404", async () => {
+        const { eventId, tierId, ref } = await soldOut();
+        await join(eventId, tierId);
+        await call("POST", `/api/bookings/${ref}/cancel`);
+        const entryId = (await call("GET", "/api/me/waitlist", { token: tokens.att2 })).json.entries[0].id;
+        assertErrorShape(await call("POST", `/api/waitlist/${entryId}/accept`), 404, "NOT_FOUND");
+        assertErrorShape(await call("POST", `/api/waitlist/${entryId}/leave`), 404, "NOT_FOUND");
+        assertErrorShape(await call("POST", `/api/waitlist/abc/accept`, { token: tokens.att2 }), 404, "NOT_FOUND");
+        assertErrorShape(await call("POST", `/api/waitlist/99999/accept`, { token: tokens.att2 }), 404, "NOT_FOUND");
+        assertErrorShape(await call("POST", `/api/waitlist/${entryId}/accept`, { as: "anon" }), 401, "UNAUTHENTICATED");
+        assertErrorShape(await call("POST", `/api/waitlist/${entryId}/accept`, { as: "org" }), 403, "FORBIDDEN");
+      });
+
+      test("leaving: your held offer goes to the next person; leaving twice is 409", async () => {
+        const { eventId, tierId, ref } = await soldOut();
+        await join(eventId, tierId);
+        await call("POST", `/api/bookings/${ref}/cancel`);
+        const entryId = (await call("GET", "/api/me/waitlist", { token: tokens.att2 })).json.entries[0].id;
+        const left = await call("POST", `/api/waitlist/${entryId}/leave`, { token: tokens.att2 });
+        assert.equal(left.status, 200);
+        assert.equal(left.json.entry.status, "left");
+        assertErrorShape(await call("POST", `/api/waitlist/${entryId}/leave`, { token: tokens.att2 }), 409, "INVALID_STATE");
+        assert.equal((await call("GET", `/api/events/${eventId}`)).json.event.tiers[0].seatsLeft, 2);
       });
     });
 

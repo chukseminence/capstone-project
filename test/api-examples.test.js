@@ -34,7 +34,7 @@ const examples = [...doc.matchAll(/### (\d+)\. (.+?)\n([\s\S]*?)```\n(curl .+?)\
 // We check the real answer LOOKS right, then swap it for the placeholder before comparing.
 function maskLikeThePage(actual, expected) {
   if (expected === "<token>" && typeof actual === "string" && /^[\w-]+\.[\w-]+\.[\w-]+$/.test(actual)) return "<token>";
-  if (expected === "<time>" && typeof actual === "string" && Math.abs(Date.parse(actual) - Date.now()) < 11 * 60_000) return "<time>";
+  if (expected === "<time>" && typeof actual === "string" && Math.abs(Date.parse(actual) - Date.now()) < 16 * 60_000) return "<time>";
   if (Array.isArray(actual) && Array.isArray(expected)) return actual.map((v, i) => maskLikeThePage(v, expected[i]));
   if (actual && expected && typeof actual === "object" && typeof expected === "object") {
     return Object.fromEntries(Object.entries(actual).map(([k, v]) => [k, maskLikeThePage(v, expected[k])]));

@@ -4,6 +4,7 @@ import { createMemoryStore } from "../src/data/memoryStore.js";
 import { createEventServiceAsOrganizer as createEventService } from "./actors.js";
 import { createBookingServiceAsAttendee as createBookingService } from "./actors.js";
 import { seatsLeft } from "../src/events.js";
+import { makeEvent } from "./helpers.js";
 
 function setup() {
   const store = createMemoryStore();
@@ -20,18 +21,20 @@ function publishedEvent(events, input, priceCents = 500000, capacity = 3) {
 }
 
 describe("data layer: memory store", () => {
+  // Since Build 8 the "memory store" is SQLite kept in memory (see src/data/memoryStore.js).
+  // It hands out COPIES of events, so changing what you were given never changes the store.
   test("keeps an event, finds it again, and a missing one is undefined or NOT_FOUND", () => {
     const store = createMemoryStore();
     assert.equal(store.getEvent("e1"), undefined);
     assert.throws(() => store.requireEvent("e1"), { code: "NOT_FOUND" });
-    const saved = store.saveEvent({ id: "e1" });
-    assert.equal(store.getEvent("e1"), saved);
-    assert.equal(store.requireEvent("e1"), saved);
+    store.saveEvent(makeEvent({ id: "e1" }));
+    assert.equal(store.getEvent("e1").id, "e1");
+    assert.equal(store.requireEvent("e1").title, "Test Event");
   });
 
   test("listEvents gives a new array each time, so changing it does not change the store", () => {
     const store = createMemoryStore();
-    store.saveEvent({ id: "e1" });
+    store.saveEvent(makeEvent({ id: "e1" }));
     const list = store.listEvents();
     list.pop();
     assert.equal(store.listEvents().length, 1);
@@ -40,7 +43,7 @@ describe("data layer: memory store", () => {
   test("two stores do not share anything", () => {
     const a = createMemoryStore();
     const b = createMemoryStore();
-    a.saveEvent({ id: "e1" });
+    a.saveEvent(makeEvent({ id: "e1" }));
     assert.equal(b.getEvent("e1"), undefined);
     assert.notEqual(a.bookings, b.bookings);
   });
@@ -104,18 +107,18 @@ describe("services: bookings", () => {
   test("the whole journey: book, pay, cancel", () => {
     const { events, bookings, store } = setup();
     publishedEvent(events, lagos, 500000, 3);
-    const tier = store.requireEvent("e1").tiers.get("ga");
+    const tier = () => store.requireEvent("e1").tiers.get("ga"); // look again each time: the store gives copies
 
     const booking = bookings.book("e1", "ga", "Ada", 2);
     assert.equal(booking.status, "pending");
-    assert.equal(seatsLeft(tier), 1);
+    assert.equal(seatsLeft(tier()), 1);
 
     assert.equal(bookings.pay(booking.ref).status, "paid");
     assert.equal(bookings.find(booking.ref).status, "paid");
 
     const { booking: cancelled } = bookings.cancel(booking.ref);
     assert.equal(cancelled.status, "refunded");
-    assert.equal(seatsLeft(tier), 3);
+    assert.equal(seatsLeft(tier()), 3);
   });
 
   test("paying a cancelled booking is refused through the service too", () => {

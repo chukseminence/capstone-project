@@ -179,6 +179,52 @@ describe("website data file (api.js) against the real server", () => {
     await assert.rejects(api.addTier(eventId, { name: "x", priceCents: 1, capacity: 1 }), (e) => e.code === "FORBIDDEN");
   });
 
+  test("refund preview, cancel, waitlist, offer and accept all work through api.js", async () => {
+    const eventId = await organizerWithEvent({ capacity: 1 });
+    const { event } = await api.getEvent(eventId);
+    const tierId = event.tiers[0].id;
+    const adaEmail = uniqueEmail("ada");
+    await api.signup({ name: "Ada", email: adaEmail, password: pw, role: "attendee" });
+    const { booking } = await api.createBooking({ eventId, tierId, buyerName: "Ada", quantity: 1 });
+    const preview = await api.getRefundPreview(booking.ref);
+    assert.equal(preview.refund.paid, false);
+    api.logout();
+
+    const bolaEmail = uniqueEmail("bola");
+    await api.signup({ name: "Bola", email: bolaEmail, password: pw, role: "attendee" });
+    const { entry } = await api.joinWaitlist({ eventId, tierId });
+    assert.equal(entry.status, "waiting");
+    assert.equal(entry.position, 1);
+    await assert.rejects(api.joinWaitlist({ eventId, tierId }), (e) => e.code === "ALREADY_ON_WAITLIST");
+    assert.equal((await api.listMyWaitlist()).entries.length, 1);
+    api.logout();
+
+    await api.login({ email: adaEmail, password: pw });
+    const cancelled = await api.cancelBooking(booking.ref);
+    assert.equal(cancelled.booking.status, "cancelled");
+    api.logout();
+
+    await api.login({ email: bolaEmail, password: pw });
+    const offered = (await api.listMyWaitlist()).entries[0];
+    assert.equal(offered.status, "offered");
+    assert.ok(offered.offerExpiresAt);
+    const accepted = await api.acceptOffer(offered.id);
+    assert.equal(accepted.booking.status, "pending");
+    assert.equal((await api.getBooking(accepted.booking.ref)).booking.buyerName, "Bola");
+  });
+
+  test("leaving a waitlist works through api.js", async () => {
+    const eventId = await organizerWithEvent({ capacity: 1 });
+    const tierId = (await api.getEvent(eventId)).event.tiers[0].id;
+    await api.signup({ name: "Ada", email: uniqueEmail("ada"), password: pw, role: "attendee" });
+    await api.createBooking({ eventId, tierId, buyerName: "Ada", quantity: 1 });
+    api.logout();
+    await api.signup({ name: "Bola", email: uniqueEmail("bola"), password: pw, role: "attendee" });
+    const { entry } = await api.joinWaitlist({ eventId, tierId });
+    await api.leaveWaitlist(entry.id);
+    assert.equal((await api.listMyWaitlist()).entries.filter((e) => e.status === "waiting").length, 0);
+  });
+
   test("an unknown event is NOT_FOUND", async () => {
     await assert.rejects(api.getEvent("EV-999999"), (e) => e.code === "NOT_FOUND");
   });

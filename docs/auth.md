@@ -60,3 +60,6 @@ Full request and reply examples: `docs/api-examples.md`.
 - **The token is kept in `sessionStorage`.** It is gone when the tab closes, but a script injected into the page could read it. We never use `innerHTML` and send a strict Content-Security-Policy to make that hard.
 - **No email check, no password reset.**
 - **HTTPS is needed in real life.** Over plain HTTP a password can be read on the network. Fine for `localhost` practice.
+
+## Added in Build 8
+Waitlist routes need an **attendee** login. A person can only see, accept or leave **their own** entries (someone else's entry answers 404). Refund preview and cancel follow the same ownership rule as bookings.
