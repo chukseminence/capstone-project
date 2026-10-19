@@ -1,5 +1,6 @@
 import { getBooking, getEvent } from "../api.js";
 import { h } from "../dom.js";
+import { qrBlock } from "./qrImage.js";
 import { formatMoney, describeDate, ticketWord } from "../money.js";
 
 // The confirmation page after a paid booking.
@@ -22,7 +23,8 @@ export async function doneView({ ref }) {
         h("p", { class: "where", text: `${event.venue}, ${event.city}` }),
         h("p", { text: `${booking.quantity} × ${tier ? tier.name : "ticket"}` }),
         h("p", { class: "summary-total" }, `Paid ${formatMoney(booking.totalCents)}`),
-        h("p", { class: "muted" }, "Booking reference ", h("strong", { class: "ref", text: booking.ref }))),
+        h("p", { class: "muted" }, "Booking reference ", h("strong", { class: "ref", text: booking.ref })),
+        qrBlock(booking.ref)),
       h("div", { class: "ticket-stub" },
         h("time", { datetime: event.date, "aria-label": date.long },
           h("span", { class: "stub-day", text: date.day }),

@@ -59,3 +59,10 @@ Text from data is always put on the page as plain text (never `innerHTML`). The 
 - **Event page**: sold-out ticket types get "Join the waitlist" (logged-in attendees) or a login link.
 - **Checkout**: the server now enforces the 10 minute hold, so the page only shows the "time is up" message; it no longer cancels by itself.
 - `public/js/refund.js` holds the plain-words helpers (pure, tested in Node).
+
+## Added in Build 9
+- **New look (design "C")**: green, big wide numerals, thick outlines, a "Next big night" box with a days/hours/minutes countdown, and a "% sold" bar (`<meter>`) on every event card. The font (Archivo) is a file in `public/fonts`, so nothing loads from other sites. No inline styles anywhere (the security policy forbids them). Behaviour did not change: only `app.css`, the page text on the events page and the navigation changed.
+- **Bottom tabs on a phone**: Events, Tickets, Sell, Me (organizers see Events, Sell, Door, Me; door staff see Events, Door, Me). On wide screens the same links are at the top. The tabs are drawn by `main.js`. **Me** (`#/me`) shows who you are and a Log out button. The Tickets and Sell tabs send visitors to the login page first.
+- **QR code on a paid ticket**: `views/qrImage.js` asks the server for the signed code (`getTicket` in `api.js`) and draws it with `public/js/qr.js` as one SVG path. Shown on the confirmation page and on every paid card in My tickets, with a "Show the code as text" fold-out for staff who paste instead of scan.
+- **Door page** (`public/checkin.html` + `js/checkin.js`): staff pick the event, paste (or scan) a code, and get a big green "Let them in" or a red reason. `js/door.js` holds the words (pure, tested). Camera scanning appears only in browsers with `BarcodeDetector`.
+- New files: `qr.js` (vendored QR encoder, pure), `door.js`, `views/me.js`, `views/qrImage.js`, `checkin.html`, `js/checkin.js`, `fonts/archivo.woff2`.

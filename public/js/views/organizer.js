@@ -136,6 +136,7 @@ export async function organizerView({ announce }) {
   const element = h("section", { class: "page" },
     h("h1", { text: "My events" }),
     h("p", { class: "lede", text: "Create an event, add ticket types, then publish it so people can book." }),
+    h("p", { class: "actions" }, h("a", { class: "button", href: "/checkin.html" }, "Check people in at the door")),
     createForm, status, list);
   return { title: "My events", element };
 }

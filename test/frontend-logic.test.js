@@ -1,10 +1,11 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, nairaToCents, describeDate, ticketWord } from "../public/js/money.js";
-import { secondsLeft, formatClock, milestoneMessage } from "../public/js/countdown.js";
+import { secondsLeft, formatClock, milestoneMessage, countdownParts } from "../public/js/countdown.js";
 import { digitsOnly, groupCardNumber, passesLuhn, validateCard } from "../public/js/card.js";
 import { REFUND_POLICY_LINES, refundMessage, refundDoneMessage, waitlistStatusWords, formatMinutesSeconds } from "../public/js/refund.js";
-import { toApiQuery } from "../public/js/views/browse.js";
+import { toApiQuery, percentSold, nextBigNight } from "../public/js/views/browse.js";
+import { describeScan, cleanCode } from "../public/js/door.js";
 
 describe("website helpers: money", () => {
   test("formatMoney shows naira from whole cents", () => {
@@ -125,5 +126,59 @@ describe("website helpers: refund and waitlist words", () => {
   });
   test("the policy has one line per rule", () => {
     assert.equal(REFUND_POLICY_LINES.length, 3);
+  });
+});
+
+describe("website helpers: the big countdown and the sold bar (design C)", () => {
+  test("countdownParts splits seconds into days, hours and minutes", () => {
+    assert.deepEqual(countdownParts(0), { days: 0, hours: 0, minutes: 0 });
+    assert.deepEqual(countdownParts(59), { days: 0, hours: 0, minutes: 0 });
+    assert.deepEqual(countdownParts(3600 + 120), { days: 0, hours: 1, minutes: 2 });
+    assert.deepEqual(countdownParts(19 * 86400 + 13 * 3600 + 13 * 60 + 5), { days: 19, hours: 13, minutes: 13 });
+    assert.deepEqual(countdownParts(-50), { days: 0, hours: 0, minutes: 0 });
+  });
+  const ev = (date, tiers) => ({ id: date, title: date, date, venue: "V", city: "C", tiers: tiers.map(([capacity, seatsLeft], i) => ({ id: "T" + i, name: "t", priceCents: 0, capacity, seatsLeft })) });
+  test("percentSold counts seats taken over all seats, rounded", () => {
+    assert.equal(percentSold(ev("2026-11-01", [[200, 143], [40, 12]])), 35); // 85 of 240 taken
+    assert.equal(percentSold(ev("2026-11-01", [[10, 10]])), 0);
+    assert.equal(percentSold(ev("2026-11-01", [[10, 0]])), 100);
+    assert.equal(percentSold(ev("2026-11-01", [])), 0);
+  });
+  test("nextBigNight is the soonest event that still has seats and has not started", () => {
+    const now = Date.parse("2026-11-05T10:00:00Z");
+    const events = [ev("2026-11-04", [[10, 5]]), ev("2026-11-06", [[10, 0]]), ev("2026-11-09", [[10, 5]]), ev("2026-11-07", [[10, 5]])];
+    assert.equal(nextBigNight(events, now).date, "2026-11-07");
+    assert.equal(nextBigNight([ev("2026-11-04", [[10, 5]])], now), null);
+    assert.equal(nextBigNight([], now), null);
+  });
+});
+
+describe("website helpers: the words at the door (door.js)", () => {
+  const err = (code, details = {}, message = "m") => ({ code, details, message });
+  test("an admitted scan says Let them in, with the name and number of people", () => {
+    const words = describeScan({ checkin: { buyerName: "Ada", quantity: 2, tierName: "VIP", bookingRef: "BK-000001" } });
+    assert.equal(words.tone, "ok");
+    assert.equal(words.headline, "Let them in");
+    assert.match(words.detail, /Ada: 2 people, VIP/);
+  });
+  test("every refusal is a STOP with its own plain headline", () => {
+    const headline = (code, details) => describeScan({ error: err(code, details) }, (t) => `<${t}>`);
+    assert.equal(headline("INVALID_TICKET").headline, "Fake or damaged code");
+    assert.equal(headline("WRONG_EVENT").headline, "Wrong event");
+    assert.equal(headline("TICKET_CANCELLED").headline, "Cancelled ticket");
+    assert.equal(headline("TICKET_NOT_PAID").headline, "Not paid");
+    for (const code of ["INVALID_TICKET", "WRONG_EVENT", "TICKET_CANCELLED", "TICKET_NOT_PAID", "ALREADY_CHECKED_IN"]) assert.equal(headline(code).tone, "stop");
+  });
+  test("a repeated scan shows when it was FIRST used", () => {
+    const words = describeScan({ error: err("ALREADY_CHECKED_IN", { checkedInAt: "2026-11-07T20:15:00.000Z" }) }, (t) => `<${t}>`);
+    assert.equal(words.headline, "Already used");
+    assert.match(words.detail, /first used at <2026-11-07T20:15:00.000Z>/);
+  });
+  test("wrong role, no login, slow down and no connection are warnings, not stops", () => {
+    for (const code of ["FORBIDDEN", "UNAUTHENTICATED", "RATE_LIMITED", "NETWORK", "SOMETHING_ELSE"]) assert.equal(describeScan({ error: err(code) }).tone, "warn");
+  });
+  test("cleanCode removes spaces and new lines a scanner or a paste adds", () => {
+    assert.equal(cleanCode("  BK-000001.1.abc \n"), "BK-000001.1.abc");
+    assert.equal(cleanCode(null), "");
   });
 });

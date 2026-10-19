@@ -126,7 +126,7 @@ describe("the server runs the job on a timer, but only when asked to", () => {
   });
 });
 
-describe("upgrading a Build 7 database (schema 2) to schema 3", () => {
+describe("upgrading a Build 7 database (schema 2) to the newest schema", () => {
   test("old rows survive; old waitlist names cannot block the line; refunds and offers work afterwards", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stub-migrate3-"));
     const file = path.join(dir, "v2.sqlite");
@@ -147,7 +147,7 @@ describe("upgrading a Build 7 database (schema 2) to schema 3", () => {
 
     const store = createSqliteStore(file);
     const check = new DatabaseSync(file);
-    assert.equal(check.prepare("PRAGMA user_version").get().user_version, 3);
+    assert.equal(check.prepare("PRAGMA user_version").get().user_version, 4);
     const row = check.prepare("SELECT status, user_id, offer_expires_at FROM waitlist").get();
     assert.deepEqual({ ...row }, { status: "left", user_id: null, offer_expires_at: null });
     check.close();
@@ -173,7 +173,7 @@ describe("upgrading a Build 7 database (schema 2) to schema 3", () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "stub-newer-")), "x.sqlite");
     createSqliteStore(file).close();
     const db = new DatabaseSync(file);
-    db.exec("PRAGMA user_version = 4");
+    db.exec("PRAGMA user_version = 5");
     db.close();
     assert.throws(() => createSqliteStore(file), /newer version/);
   });

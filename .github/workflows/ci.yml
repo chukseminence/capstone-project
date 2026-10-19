@@ -1,0 +1,18 @@
+# Runs the whole test suite on every push and every pull request.
+# A failing test shows up as a red cross next to the commit, and the pull request cannot look "all green".
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # No "npm install": this project uses no outside packages.
+      - run: npm test

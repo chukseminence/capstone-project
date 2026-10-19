@@ -19,6 +19,12 @@ export const STATUS_BY_CODE = {
   ALREADY_CANCELLED: 409,
   EMAIL_TAKEN: 409,
   BOOKING_EXPIRED: 409,
+  INVALID_TICKET: 400,
+  WRONG_EVENT: 409,
+  TICKET_NOT_PAID: 409,
+  TICKET_CANCELLED: 409,
+  ALREADY_CHECKED_IN: 409,
+  RATE_LIMITED: 429,
   EVENT_STARTED: 409,
   ALREADY_ON_WAITLIST: 409,
   OFFER_EXPIRED: 409,
@@ -33,7 +39,7 @@ export function sendCaughtError(req, res, err) {
   const known = err instanceof DomainError || err instanceof HttpProblem;
   const status = known ? STATUS_BY_CODE[err.code] : undefined;
   if (status === 401) return sendError(req, res, 401, err.code, err.message, { "WWW-Authenticate": "Bearer" });
-  if (status) return sendError(req, res, status, err.code, err.message);
+  if (status) return sendError(req, res, status, err.code, err.message, {}, err.details);
   console.error(err);
   return sendError(req, res, 500, "INTERNAL", "Something went wrong on the server.");
 }

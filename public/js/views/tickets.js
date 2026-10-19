@@ -2,6 +2,7 @@
 // The server only ever sends the bookings and waitlist entries of the logged-in person.
 import { listMyBookings, listMyWaitlist, getEvent, getRefundPreview, cancelBooking, acceptOffer, leaveWaitlist, ApiError } from "../api.js";
 import { h } from "../dom.js";
+import { qrBlock } from "./qrImage.js";
 import { formatMoney, describeDate, ticketWord } from "../money.js";
 import { REFUND_POLICY_LINES, refundMessage, refundDoneMessage, waitlistStatusWords, formatMinutesSeconds } from "../refund.js";
 
@@ -16,6 +17,7 @@ const STATUS_WORDS = {
 const REFRESH_MS = 20_000; // look for new offers now and then
 
 export async function ticketsView({ announce }) {
+  const qrCache = new Map(); // ref -> signed code, so a refresh does not ask the server again
   let data = await load();
   let openPanel = null; // the booking ref whose "cancel?" question is open
   let refreshing = false;
@@ -104,6 +106,7 @@ export async function ticketsView({ announce }) {
         event ? h("p", { class: "where", text: `${event.venue}, ${event.city}` }) : null,
         h("p", { text: `${booking.quantity} ${ticketWord(booking.quantity)}${tier ? `, ${tier.name}` : ""}: ${formatMoney(booking.totalCents)}` }),
         h("p", { class: `badge badge-status badge-${state}`, text: STATUS_WORDS[state] ?? state }),
+        state === "paid" ? qrBlock(booking.ref, { cache: qrCache }) : null,
         state === "refunded" ? h("p", { class: "muted", text: booking.refundCents ? `Refunded ${formatMoney(booking.refundCents)}.` : "No refund was due." }) : null,
         h("p", { class: "muted" }, "Booking ", h("strong", { class: "ref", text: booking.ref })),
         h("div", { class: "actions ticket-actions" },

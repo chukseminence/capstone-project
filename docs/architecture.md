@@ -1,4 +1,4 @@
-# Architecture (Build 8)
+# Architecture (Build 9)
 
 This page shows how the project is organised: what each part is for, which part may talk to which, and what happens when a request arrives.
 
@@ -112,3 +112,10 @@ Pages -> `api.js` -> the REST API -> services -> data. See `docs/frontend.md`.
 - New small layers: `src/lib/` (the clock, no dependencies), `src/domain/` (pure rules like the refund policy) and `src/jobs/` (the timer that releases late bookings and offers). `test/architecture.test.js` checks who may import whom.
 - `src/services/seatService.js` has `sweep()`, the one place that expires bookings and offers and hands freed seats to the waitlist. Services call it first; `jobs/maintenance.js` calls it on a timer.
 - See `docs/refunds-and-waitlist.md`.
+
+## Tickets, the door and security (added in Build 9)
+- `src/lib/ticketToken.js` signs and checks the text in a ticket's QR code (HMAC-SHA256, its own secret). `src/lib/rateLimit.js` counts tries per address. Both are rules-layer files with no storage.
+- `src/services/checkinService.js` hands the owner of a paid booking a signed code and lets **staff** check a code in. The data layer does the one atomic `UPDATE` that admits a ticket (`store.bookings.checkIn`).
+- `src/http/securityHeaders.js` holds the security headers. `src/http` counts as part of the routes (HTTP) layer in `test/architecture.test.js`. Every reply, page or API, carries them.
+- The rate limiters are made in `server.js` and handed to the routes, so routes still import no rules.
+- `.github/workflows/ci.yml` runs `npm test` on every push. See `docs/checkin.md` and `docs/security-checklist.md`.

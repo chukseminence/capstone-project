@@ -57,7 +57,7 @@ export async function authView({ mode, query, announce }) {
         ? await signup({ name: name.value, email: email.value, password: password.value, role: form.elements.role.value })
         : await login({ email: email.value, password: password.value });
       announce(`Welcome, ${user.name}.`);
-      location.hash = next ?? (user.role === "organizer" ? "#/organizer" : "#/");
+      location.hash = next ?? (user.role === "organizer" ? "#/organizer" : user.role === "staff" ? "#/me" : "#/");
     } catch (err) {
       submit.disabled = false;
       submit.textContent = isSignup ? "Create account" : "Log in";

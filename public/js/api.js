@@ -20,11 +20,12 @@ export const DECLINED_TEST_CARD = "4000000000000002";
 export const SUCCESS_TEST_CARD = "4242424242424242";
 
 export class ApiError extends Error {
-  constructor(code, message, status = 0) {
+  constructor(code, message, status = 0, details = {}) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.details = details; // extra facts the server sent, like { checkedInAt } for a repeated scan
   }
 }
 
@@ -127,7 +128,8 @@ async function request(method, path, { body, query } = {}) {
     const problem = data?.error;
     // Our login stopped working (expired, or the server restarted): forget it, so the pages show "Log in".
     if (response.status === 401 && session && !path.startsWith("/api/auth/")) writeSession(null);
-    throw new ApiError(problem?.code ?? "SERVER", problem?.message ?? "The server sent an answer we did not understand.", response.status);
+    const { code, message, ...details } = problem ?? {};
+    throw new ApiError(code ?? "SERVER", message ?? "The server sent an answer we did not understand.", response.status, details);
   }
   if (data === null) throw new ApiError("SERVER", "The server sent an answer we did not understand.", response.status);
   return data;
@@ -241,4 +243,19 @@ export function acceptOffer(entryId) {
 // POST /api/waitlist/:id/leave   leave the line, or turn an offer down
 export function leaveWaitlist(entryId) {
   return request("POST", `/api/waitlist/${encodeURIComponent(entryId)}/leave`);
+}
+
+// ------------------------------------------------------------------- tickets
+// GET /api/bookings/:ref/ticket   the signed text for the QR code (only the owner of a PAID booking).
+// Answer: { ticket: { code, bookingRef } }
+export function getTicket(ref) {
+  return request("GET", `/api/bookings/${encodeURIComponent(ref)}/ticket`);
+}
+
+// POST /api/checkin   STAFF only. Scan a code at an event.
+// Answer: { checkin: { bookingRef, buyerName, quantity, tierName, event, checkedInAt } }
+// A refused scan throws an ApiError: INVALID_TICKET, WRONG_EVENT, TICKET_CANCELLED, TICKET_NOT_PAID,
+// ALREADY_CHECKED_IN (then error.checkedInAt says when), FORBIDDEN, RATE_LIMITED.
+export function checkIn({ code, eventId }) {
+  return request("POST", "/api/checkin", { body: { code, eventId } });
 }

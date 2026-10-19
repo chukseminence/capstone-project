@@ -25,8 +25,8 @@ After login the server sends a signed token. The website sends it back as `Autho
 | Role | How you get it | May do |
 |---|---|---|
 | `attendee` | sign up | book, pay, cancel and list **their own** bookings |
-| `organizer` | sign up | create events, add tiers, publish, unpublish, list **their own** events |
-| `staff` | not self-service (made by an admin, used from Build 9 for check-in) | nothing yet |
+| `organizer` | sign up | create events, add tiers, publish, unpublish, list **their own** events, and check people in to **their own** events (`POST /api/checkin`) |
+| `staff` | not self-service. `npm run seed` makes `demo-staff@example.com`; `npm run make-staff -- "Name" email password` makes more | check people in at the door (`POST /api/checkin`) |
 
 Signing up as `staff` is refused (403), so nobody can make themselves staff.
 
@@ -63,3 +63,8 @@ Full request and reply examples: `docs/api-examples.md`.
 
 ## Added in Build 8
 Waitlist routes need an **attendee** login. A person can only see, accept or leave **their own** entries (someone else's entry answers 404). Refund preview and cancel follow the same ownership rule as bookings.
+
+## Added in Build 9
+- Only **staff** (any event) and the **organizer of that event** may call `POST /api/checkin`. An attendee, or an organizer scanning someone else's event, gets 403 `FORBIDDEN`; no login gets 401.
+- Login attempts are limited per address (20 a minute). Too many gives 429 `RATE_LIMITED` with a `Retry-After` header.
+- The ticket QR code is signed with `TICKET_SECRET`, a different key from `TOKEN_SECRET`. A login token is never accepted as a ticket.

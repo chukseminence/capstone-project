@@ -1,7 +1,7 @@
 import { sendJson, sendError } from "./respond.js";
 import { sendCaughtError, HttpProblem } from "./errors.js";
 import { readJsonBody } from "./body.js";
-import { presentEvent, presentTier, presentBooking, presentUser, presentWaitlistEntry, presentRefund } from "./present.js";
+import { presentEvent, presentTier, presentBooking, presentUser, presentWaitlistEntry, presentRefund, presentCheckin } from "./present.js";
 import { DomainError } from "../services/errors.js";
 import { requireLogin } from "../services/access.js";
 
@@ -49,8 +49,9 @@ function entryIdOf(text) {
   return /^\d{1,12}$/.test(text) ? Number(text) : -1;
 }
 
-export function createApiHandler({ services }) {
-  const { events, bookings, waitlist, auth } = services;
+// limits: { login, checkin } rate limiters (see src/lib/rateLimit.js), made by the server and handed in.
+export function createApiHandler({ services, limits = {} }) {
+  const { events, bookings, waitlist, auth, checkin } = services;
 
   // The route table: method + pattern -> what to do.
   // Each handler returns { status, body, headers? }.
@@ -72,6 +73,7 @@ export function createApiHandler({ services }) {
       method: "POST",
       pattern: "/api/auth/login",
       auth: "none",
+      limit: "login",
       run: async ({ req }) => {
         const result = await auth.login(await readJsonBody(req));
         return { status: 200, body: { user: presentUser(result.user), token: result.token } };
@@ -199,6 +201,24 @@ export function createApiHandler({ services }) {
       },
     },
     {
+      method: "GET",
+      pattern: "/api/bookings/:ref/ticket",
+      auth: "required",
+      // The signed text for the QR code. Only the owner of a PAID booking gets it.
+      run: ({ params, actor }) => ({ status: 200, body: { ticket: checkin.issue(params.ref, actor) } }),
+    },
+    {
+      method: "POST",
+      pattern: "/api/checkin",
+      auth: "required",
+      limit: "checkin",
+      // Staff only (the service refuses everybody else with FORBIDDEN).
+      run: async ({ req, actor }) => {
+        const { code, eventId } = await readJsonBody(req);
+        return { status: 200, body: { checkin: presentCheckin(checkin.checkIn(code, eventId, actor)) } };
+      },
+    },
+    {
       method: "POST",
       pattern: "/api/waitlist",
       auth: "required",
@@ -262,6 +282,17 @@ export function createApiHandler({ services }) {
         if (!params) continue;
         allowed.push(route.method);
         if (route.method !== method) continue;
+
+        // Too many tries from one address? Say so BEFORE doing any work (this is what slows down guessing).
+        const limiter = route.limit ? limits[route.limit] : undefined;
+        if (limiter) {
+          const verdict = limiter.hit(req.socket.remoteAddress ?? "unknown");
+          if (!verdict.allowed) {
+            return sendError(req, res, 429, "RATE_LIMITED", `Too many attempts. Try again in ${verdict.retryAfterSeconds} seconds.`, {
+              "Retry-After": String(verdict.retryAfterSeconds),
+            });
+          }
+        }
 
         // Who is asking? Look at the login BEFORE doing any work.
         let actor = null;

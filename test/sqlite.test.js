@@ -223,11 +223,11 @@ describe("SQLite: data survives a restart", () => {
 
 // ---------------------------------------------------------------------------------
 describe("SQLite: the schema version", () => {
-  test("a new file gets the newest schema version (3)", () => {
+  test("a new file gets the newest schema version (4)", () => {
     const file = newFile();
     createSqliteStore(file).close();
     const db = new DatabaseSync(file);
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
     db.close();
   });
 

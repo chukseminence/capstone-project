@@ -58,3 +58,16 @@ export function presentRefund(refund) {
 export function presentUser(user) {
   return { id: user.id, name: user.name, email: user.email, role: user.role };
 }
+
+// What the door staff see after a successful scan. The buyer's name is there so staff can say hello;
+// no email and no user id.
+export function presentCheckin({ booking, event, tierName }) {
+  return {
+    bookingRef: booking.ref,
+    buyerName: booking.buyerName,
+    quantity: booking.quantity,
+    tierName,
+    event: { id: event.id, title: event.title },
+    checkedInAt: booking.checkedInAt,
+  };
+}

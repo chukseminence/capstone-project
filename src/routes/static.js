@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { sendError } from "./respond.js";
+import { securityHeaders } from "../http/securityHeaders.js";
 
 const CONTENT_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
   ".svg": "image/svg+xml",
@@ -14,17 +16,7 @@ const CONTENT_TYPES = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".ico": "image/x-icon",
-};
-
-// The browser is told: only run scripts and styles that come from THIS site, never load anything
-// from other sites, and never let another site put this one inside a frame. If a bug ever let someone
-// inject a <script> or a stolen link into a page, the browser itself would refuse to run or load it.
-const SECURITY_HEADERS = {
-  "Content-Security-Policy":
-    "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'; " +
-    "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
-  "X-Frame-Options": "DENY",
-  "Referrer-Policy": "no-referrer",
+  ".woff2": "font/woff2",
 };
 
 // SAFETY CHECK 1: hidden names. Any part of the address that starts with a dot is refused.
@@ -82,8 +74,7 @@ export function createStaticHandler(publicDir) {
     res.writeHead(200, {
       "Content-Type": CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? "application/octet-stream",
       "Content-Length": data.length,
-      "X-Content-Type-Options": "nosniff",
-      ...SECURITY_HEADERS,
+      ...securityHeaders(),
     });
     res.end(req.method === "HEAD" ? undefined : data);
   };

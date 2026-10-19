@@ -1,4 +1,4 @@
-// Fills the database with practice data: 3 demo accounts and 8 events (one sold out,
+// Fills the database with practice data: 4 demo accounts and 8 events (one sold out,
 // some with a sold-out ticket type), so the website has something to show.
 //   npm run seed          (then npm start)
 // Safe to run twice: if the demo organizer already exists it does nothing.
@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSqliteStore } from "../src/data/sqliteStore.js";
+import { hashPassword } from "../src/auth.js";
 import { createAuthService } from "../src/services/authService.js";
 import { createEventService } from "../src/services/eventService.js";
 import { createBookingService } from "../src/services/bookingService.js";
@@ -33,6 +34,8 @@ if (store.users.findByEmail("demo-organizer@example.com")) {
 const account = async (name, email, role) => (await auth.signup({ name, email, password: PASSWORD, role })).user;
 const organizer = await account("Demo Organizer", "demo-organizer@example.com", "organizer");
 await account("Demo Attendee", "demo-attendee@example.com", "attendee");
+// Staff cannot sign up on the website (a stranger must not make themselves door staff), so the seed makes one.
+store.users.create({ name: "Demo Staff", email: "demo-staff@example.com", passwordHash: await hashPassword(PASSWORD), role: "staff" });
 const filler = await account("Early Buyers", "early-buyers@example.com", "attendee"); // owns the pretend sales below
 
 // [title, city, venue, date, [[tier name, price in cents, capacity, already sold], ...]]
@@ -59,8 +62,9 @@ for (const [title, city, venue, date, tiers] of DEMO) {
   }
 }
 
-console.log(`Done. ${DEMO.length} events and 3 demo accounts were added to ${path.resolve(dbFile)}`);
-console.log("Practice logins (password for all three: " + PASSWORD + "):");
+console.log(`Done. ${DEMO.length} events and 4 demo accounts were added to ${path.resolve(dbFile)}`);
+console.log("Practice logins (password for all of them: " + PASSWORD + "):");
 console.log("  organizer: demo-organizer@example.com");
 console.log("  attendee:  demo-attendee@example.com");
+console.log("  staff:     demo-staff@example.com   (scans tickets at the door)");
 store.close();

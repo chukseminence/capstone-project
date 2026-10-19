@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning start.js",
     "seed": "node --disable-warning=ExperimentalWarning scripts/seed.js",
+    "make-staff": "node --disable-warning=ExperimentalWarning scripts/make-staff.js",
     "demo": "node demo.js",
     "demo:search": "node demo-search.js",
     "demo:states": "node demo-states.js",

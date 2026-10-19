@@ -5,9 +5,9 @@ import { sendError } from "./respond.js";
 
 // ROUTES layer: look at the address and the method, then hand over to the right handler.
 // Rules of thumb for this layer: no business rules here, and no storage here.
-export function createRouter({ publicDir, services }) {
+export function createRouter({ publicDir, services, limits }) {
   const serveStatic = createStaticHandler(publicDir);
-  const handleApi = createApiHandler({ services });
+  const handleApi = createApiHandler({ services, limits });
 
   return async function route(req, res) {
     if (typeof req.url !== "string" || !req.url.startsWith("/") || req.url.startsWith("//")) {

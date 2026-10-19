@@ -23,3 +23,9 @@ const MILESTONES = new Map([
 export function milestoneMessage(seconds) {
   return MILESTONES.get(seconds) ?? null;
 }
+
+// A big countdown (days, hours, minutes) for the "next big night" box on the events page.
+export function countdownParts(totalSeconds) {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  return { days: Math.floor(s / 86400), hours: Math.floor((s % 86400) / 3600), minutes: Math.floor((s % 3600) / 60) };
+}

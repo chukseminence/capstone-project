@@ -27,8 +27,8 @@ import { HOLD_MS, OFFER_MS } from "../holds.js";
 // given back exactly once, even if the same cancel arrives twice.
 
 // Schema history:  v1 = Build 5 (events, tiers, bookings, waitlist).  v2 = Build 7 (users, owners).
-//                  v3 = Build 8 (refund amounts, waitlist offers).
-const SCHEMA_VERSION = 3;
+//                  v3 = Build 8 (refund amounts, waitlist offers).  v4 = Build 9 (check-in time).
+const SCHEMA_VERSION = 4;
 
 export const SCHEMA_V1 = `
 CREATE TABLE events (
@@ -106,6 +106,12 @@ ALTER TABLE waitlist ADD COLUMN status TEXT NOT NULL DEFAULT 'waiting'
 ALTER TABLE waitlist ADD COLUMN offer_expires_at TEXT;
 UPDATE waitlist SET status = 'left';
 `,
+  // Build 9. A booking can now be checked in at the door: when, and by which staff account.
+  // NULL means "not checked in yet". Old bookings simply start as not checked in.
+  4: `
+ALTER TABLE bookings ADD COLUMN checked_in_at TEXT;
+ALTER TABLE bookings ADD COLUMN checked_in_by TEXT REFERENCES users(id);
+`,
 };
 
 // Open (or create) the database and make sure the tables exist.
@@ -163,6 +169,7 @@ function bookingFromRow(row) {
     holdExpiresAt: row.hold_expires_at ?? null,
     refundCents: row.refund_cents ?? null,
     refundedAt: row.refunded_at ?? null,
+    checkedInAt: row.checked_in_at ?? null,
   };
 }
 
@@ -409,6 +416,24 @@ export function createSqliteStore(file = ":memory:", { busyTimeoutMs = 5000 } = 
         const booking = bookingFromRow(db.prepare("SELECT * FROM bookings WHERE ref = ?").get(ref));
         return { booking, nextInLine: offered[0] ? { name: offered[0].name } : null };
       });
+    },
+
+    // S14 + S15: admit a booking at the door. ONE statement does the checking AND the writing:
+    //   "set checked_in_at, but only if this booking is for THIS event, is paid, and has not been checked in".
+    // Two staff scanning the same code at the same moment send two of these. The database runs them
+    // one after the other, and only the first one finds checked_in_at still empty, so only it changes a row.
+    // (A "read, then write" would let both read "empty" and both admit the person. That is the bug.)
+    // Returns { admitted: true, booking } or { admitted: false, booking } so the caller can say WHY not.
+    checkIn(ref, eventId, { staffId = null, nowMs = Date.now() } = {}) {
+      if (typeof ref !== "string") return { admitted: false, booking: undefined };
+      const changed = db
+        .prepare(
+          `UPDATE bookings SET checked_in_at = ?, checked_in_by = ?
+           WHERE ref = ? AND event_id = ? AND status = 'paid' AND checked_in_at IS NULL`
+        )
+        .run(isoOf(nowMs), staffId, ref, eventId);
+      const row = db.prepare("SELECT * FROM bookings WHERE ref = ?").get(ref);
+      return { admitted: changed.changes === 1, booking: row ? bookingFromRow(row) : undefined };
     },
 
     // Only a sold-out tier has a waitlist. Returns your place in line.

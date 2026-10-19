@@ -345,7 +345,7 @@ describe("upgrading an old (Build 5) database file keeps its data", () => {
 
     const store = createSqliteStore(file);
     const check = new DatabaseSync(file);
-    assert.equal(check.prepare("PRAGMA user_version").get().user_version, 3);
+    assert.equal(check.prepare("PRAGMA user_version").get().user_version, 4);
     check.close();
 
     const event = store.requireEvent("EV-000001");

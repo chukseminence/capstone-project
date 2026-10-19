@@ -36,7 +36,7 @@ describe("website rules: ALL data access lives in one file (public/js/api.js)", 
     }
   });
   test("pure helpers (money, countdown, card) do not touch the page or the data file", () => {
-    for (const name of ["money", "countdown", "card", "refund"]) {
+    for (const name of ["money", "countdown", "card", "refund", "qr", "door"]) {
       let text = read(path.join(publicDir, "js", `${name}.js`));
       if (name === "refund") text = text.replace('import { formatMoney } from "./money.js";', ""); // the one allowed import: another pure helper
       assert.ok(!/\bdocument\b|\bwindow\b|\bimport\b/.test(text), `${name}.js should be plain logic`);
@@ -58,6 +58,10 @@ describe("website rules: safety", () => {
       const text = read(f);
       assert.ok(!/https?:\/\/(?!www\.w3\.org)/.test(text.replace(/<!--.*?-->/gs, "")), `${rel(f)} loads something from the internet`);
     }
+  });
+  test("the vendored QR reader (jsQR) makes no network calls and has no way to run code from text", () => {
+    const text = read(path.join(publicDir, "js", "vendor", "jsqr.mjs"));
+    for (const bad of ["fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "eval(", "new Function", "document.write", "innerHTML", "import("]) assert.ok(!text.includes(bad), `jsqr.mjs contains ${bad}`);
   });
   test("only the data file knows the test card numbers", () => {
     for (const f of jsFiles.filter((f) => rel(f) !== "js/api.js" && rel(f) !== "js/views/checkout.js")) {
@@ -108,6 +112,43 @@ describe("website rules: accessibility basics in index.html", () => {
   });
 });
 
+describe("website rules: the door page (checkin.html)", () => {
+  const html = read(path.join(publicDir, "checkin.html"));
+  test("it has the same accessibility basics as index.html", () => {
+    assert.match(html, /<html lang="en">/);
+    assert.match(html, /name="viewport"/);
+    assert.match(html, /<title>[^<]+<\/title>/);
+    assert.match(html, /<main id="main"/);
+    assert.match(html, /class="skip-link" href="#main"/);
+    assert.match(html, /id="announcer"[^>]*aria-live="polite"/);
+    assert.match(html, /<nav aria-label="Main"/);
+    assert.match(html, /<nav class="tabbar" aria-label="Tabs"/);
+    assert.match(html, /<script type="module" src="\/js\/checkin\.js">/);
+  });
+  test("it has no inline script, style or event handler", () => {
+    assert.ok(!/<script(?![^>]*\bsrc=)/i.test(html), "inline <script>");
+    assert.ok(!/<style[\s>]/i.test(html), "inline <style>");
+    assert.ok(!/\son\w+\s*=/i.test(html), "inline event handler");
+  });
+  test("the door script gets its data only through api.js, and the page code builds no HTML from text", () => {
+    const text = read(path.join(publicDir, "js", "checkin.js"));
+    assert.match(text, /from "\.\/api\.js"/);
+    assert.ok(!text.includes("innerHTML"));
+  });
+  test("the door page can read QR codes in Safari too: the jsQR reader is vendored with its licence and used when BarcodeDetector is missing", () => {
+    const scan = read(path.join(publicDir, "js", "scan.js"));
+    assert.match(scan, /BarcodeDetector/);
+    assert.match(scan, /vendor\/jsqr\.mjs/);
+    assert.ok(fs.existsSync(path.join(publicDir, "js", "vendor", "jsqr.mjs")));
+    assert.ok(fs.existsSync(path.join(publicDir, "js", "vendor", "jsqr.LICENSE.txt")));
+  });
+  test("the four tabs of the phone layout are Events, Tickets, Sell, Me (organizer: Events, Sell, Door, Me; staff: Events, Door, Me)", () => {
+    const main = read(path.join(publicDir, "js", "main.js"));
+    for (const word of ['"Events"', '"Tickets"', '"Sell"', '"Me"', '"Door"']) assert.ok(main.includes(word), word);
+    assert.match(read(path.join(publicDir, "index.html")), /<nav class="tabbar" id="tabbar" aria-label="Tabs">/);
+  });
+});
+
 describe("website rules: the server serves the website correctly", () => {
   let server;
   let base;
@@ -122,7 +163,7 @@ describe("website rules: the server serves the website correctly", () => {
   });
 
   test("every file in public/ is served with the right type", async () => {
-    const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
+    const types = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".txt": "text/plain", ".css": "text/css", ".woff2": "font/woff2" };
     for (const f of files) {
       const res = await fetch(`${base}/${rel(f)}`);
       assert.equal(res.status, 200, rel(f));

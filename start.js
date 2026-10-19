@@ -9,6 +9,10 @@ if (major < 22 || (major === 22 && minor < 13)) {
   console.error(`This project needs Node 22.13 or newer. You have ${process.versions.node}.`);
   process.exit(1);
 }
+// Secrets live in a file called .env next to this one (see .env.example). It is NEVER committed to Git
+// (.gitignore lists it). Values you set in the terminal win over the file.
+if (fs.existsSync(new URL("./.env", import.meta.url))) process.loadEnvFile(fileURLToPath(new URL("./.env", import.meta.url)));
+
 const { createSqliteStore } = await import("./src/data/sqliteStore.js");
 
 const publicDir = fileURLToPath(new URL("./public", import.meta.url));
@@ -42,8 +46,29 @@ if (tokenSecret !== undefined && tokenSecret.length < 16) {
   process.exit(1);
 }
 
+// The key that signs the QR codes on tickets: a DIFFERENT secret from TOKEN_SECRET.
+// In production (NODE_ENV=production) it is REQUIRED: there is no built-in default, because a default
+// that everybody can read in the code would let anybody print a ticket that gets in.
+// Outside production, if you leave it out, a random key is made and old QR codes stop working at the next restart.
+const ticketSecret = process.env.TICKET_SECRET || undefined;
+const production = process.env.NODE_ENV === "production";
+if ((production && ticketSecret === undefined) || (ticketSecret !== undefined && ticketSecret.length < 16)) {
+  console.error(
+    production && ticketSecret === undefined
+      ? "TICKET_SECRET is required when NODE_ENV=production. Make one with: node -e \"console.log(crypto.randomBytes(32).toString('hex'))\""
+      : "TICKET_SECRET must be at least 16 characters long."
+  );
+  store.close();
+  process.exit(1);
+}
+if (production && tokenSecret === undefined) {
+  console.error("TOKEN_SECRET is required when NODE_ENV=production.");
+  store.close();
+  process.exit(1);
+}
+
 // Every 15 seconds the server lets go of unpaid bookings and waitlist offers that ran out of time.
-const server = createServer({ publicDir, store, tokenSecret, maintenanceIntervalMs: 15_000 });
+const server = createServer({ publicDir, store, tokenSecret, ticketSecret, maintenanceIntervalMs: 15_000 });
 
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {
@@ -61,6 +86,7 @@ server.listen(port, () => {
   console.log(`  Health:   http://localhost:${port}/health`);
   console.log(`  Database: ${dbFile === ":memory:" ? "in memory (lost when you stop)" : path.resolve(dbFile)}`);
   console.log(`  Logins:   ${tokenSecret ? "signed with your TOKEN_SECRET" : "signed with a random key (everyone logs in again after a restart)"}`);
+  console.log(`  Tickets:  ${ticketSecret ? "QR codes signed with your TICKET_SECRET" : "QR codes signed with a random key (they stop working after a restart)"}`);
   console.log(`Press Ctrl + C to stop.`);
 });
 

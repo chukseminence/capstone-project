@@ -1,4 +1,4 @@
-# The database (Build 8: schema version 3)
+# The database (Build 9: schema version 4)
 
 Data lives in one SQLite file: `data/tickets.sqlite` (the `data/` folder is **not** committed to Git).
 SQLite is built into Node (`node:sqlite`, Node 22.13 or newer), so there is nothing to install.
@@ -64,7 +64,7 @@ erDiagram
 | `users` | One row per account: name, unique email, password **hash**, role (`attendee`, `organizer`, `staff`). |
 | `events` | One row per event, with its `owner_id`. `status` is `draft` or `published`. |
 | `tiers` | The ticket types of an event, with `capacity` and `sold`. Identified by event id plus tier id. |
-| `bookings` | One row per booking, with `user_id` (who booked) and `hold_expires_at`. `status` is one of `pending`, `paid`, `cancelled`, `expired`, `refunded`. |
+| `bookings` | One row per booking, with `user_id` (who booked), `hold_expires_at`, and since Build 9 `checked_in_at` and `checked_in_by` (empty until staff scan the ticket at the door). `status` is one of `pending`, `paid`, `cancelled`, `expired`, `refunded`. |
 | `waitlist` | People waiting for a sold-out tier, with `user_id`, `status` (`waiting`, `offered`, `accepted`, `expired`, `left`) and `offer_expires_at`. The lowest `id` among `waiting` is the front of the line. |
 | `counters` | The next number for `EV-000001` and `BK-000001`, so ids keep counting after a restart. |
 
@@ -92,7 +92,7 @@ Every value reaches SQL through a `?`, for example `WHERE id = ?`. We never buil
 
 ## Schema version
 
-SQLite keeps a number inside the file (`PRAGMA user_version`). It is `3` now. Version 2 (Build 7) adds the `users` table and the owner, user and hold columns. Version 3 (Build 8) adds refund columns to `bookings` (`refund_cents`, `refunded_at`) and `user_id`, `status`, `offer_expires_at` to `waitlist`. Old waitlist rows (which had no owner) are marked `left`. A version 1 or 2 file is **upgraded automatically** the first time the server starts, keeping all data. Old events and bookings get no owner (`NULL`), so nobody can change them.
+SQLite keeps a number inside the file (`PRAGMA user_version`). It is `4` now. Version 2 (Build 7) adds the `users` table and the owner, user and hold columns. Version 3 (Build 8) adds refund columns to `bookings` (`refund_cents`, `refunded_at`) and `user_id`, `status`, `offer_expires_at` to `waitlist`. Old waitlist rows (which had no owner) are marked `left`. Version 4 (Build 9) adds `checked_in_at` and `checked_in_by` to `bookings`; old bookings start as "not checked in". A version 1, 2 or 3 file is **upgraded automatically** the first time the server starts, keeping all data. Old events and bookings get no owner (`NULL`), so nobody can change them.
 A new file gets the tables created. A file from a **newer** version of the project is refused with a clear message, so an old copy of the code can never damage a newer database. Every future change to the tables bumps this number and adds one more upgrade step.
 
 ## Where the file lives, and starting fresh

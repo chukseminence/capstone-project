@@ -35,7 +35,11 @@ function listJsFiles(dir) {
 
 function layerOf(file) {
   const parts = path.relative(SRC, file).split(path.sep);
-  if (parts.length > 1) return parts[0] === "domain" || parts[0] === "lib" ? "rules" : parts[0]; // routes, services, data, jobs (domain and lib count as rules)
+  if (parts.length > 1) {
+    if (parts[0] === "domain" || parts[0] === "lib") return "rules"; // domain and lib count as rules
+    if (parts[0] === "http") return "routes"; // src/http (security headers) is part of the HTTP layer
+    return parts[0]; // routes, services, data, jobs
+  }
   return parts[0] === "server.js" ? "server" : "rules";
 }
 

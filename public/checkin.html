@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#087A42">
+  <title>Door check-in | Stub</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect x=%272%27 y=%279%27 width=%2728%27 height=%2714%27 rx=%273%27 fill=%27%23087a42%27/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/checkin.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to the page content</a>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Stub, home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Stub</span>
+    </a>
+    <nav aria-label="Main">
+      <a href="/">All events</a>
+      <a href="/#/me">Me</a>
+    </nav>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <noscript><p class="notice">This page needs JavaScript. Turn it on in your browser and reload.</p></noscript>
+    <p class="notice" id="loading">Loading the door scanner…</p>
+  </main>
+
+  <nav class="tabbar" aria-label="Tabs">
+    <a class="tab" href="/">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Events</span>
+    </a>
+    <a class="tab is-active" href="/checkin.html" aria-current="page">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 3h10v18H5zM15 7h4v14h-4zM11 12h.01"/></svg><span>Door</span>
+    </a>
+    <a class="tab" href="/#/me">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"/></svg><span>Me</span>
+    </a>
+  </nav>
+
+  <footer class="site-footer">
+    <p>Door check-in. Organizers can check people in to their own events, and door staff to any event.</p>
+  </footer>
+
+  <div id="announcer" class="sr-only" role="status" aria-live="polite"></div>
+</body>
+</html>
