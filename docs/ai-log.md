@@ -110,3 +110,27 @@ What I learned: a check and a write must be one step. A database can refuse bad 
 **Not done yet:** the debugging exercise write-up (`docs/debugging-exercise.md`); I have not received that exercise.
 
 **What I learned:** time is a dependency, so pass in a clock you can control; make "release the seats" one function that is safe to run twice; use compare-and-set (`UPDATE ... WHERE status = 'pending'`) so two things racing cannot both win; a random-actions test with a fixed seed can check an invariant (seats never lost or double counted) better than hand-picked cases.
+ ## Build 9.1: organizer check-in and a QR scanner that works in Safari (fixes after phone testing)
+
+**What I asked the AI:** After testing Build 9 on my iPhone I told it two things: I bought a ticket on an attendee account, but on the organizer account that posted the event I could not see how to check anyone in; and scanning the QR "took me to another page in Safari". When it asked who should be able to check people in, I chose that organizers must scan, because it is their event.
+
+**What the AI produced:** `checkinService.js` now lets an organizer check in tickets for their own events only (door staff still work at any event; another organizer's event is `FORBIDDEN`); a **Door** tab for organizers (Events, Sell, Door, Me), a "Check people in at the door" button on My events and a Door button on Me; the door page lists only the organizer's own published events; `public/js/scan.js` (uses the browser's own QR reader where it exists, otherwise the jsQR library); `public/js/vendor/jsqr.mjs` with its Apache-2.0 licence file; the `.mjs` file type in the static file server; a clear message when the browser blocks the camera; the result box moved above the camera so it is seen on a phone; updated docs (`auth.md`, `checkin.md`, `security-checklist.md`, `frontend.md`, `README-build-9.md`); new tests (606 in total).
+
+**What I checked myself:** I ran `npm test` (606 pass) and unzipped the delivered zip into a clean folder three times and ran it again. The AI also ran a real browser test on a phone-sized screen: an organizer creates and publishes an event, an attendee books and pays, the ticket QR is captured and played back as a fake camera, and the organizer's door page reads it with the Safari-style reader (the browser's own reader switched off): green "Let them in", then red "Already used" with the time. An attendee opening the door page is turned away, and an organizer with no events has nothing to scan. I have still to try it on my own iPhone, over an `https://` address.
+
+**What the AI got wrong / what I changed (the demo story):**
+- Build 9 made the door staff-only because the brief said "staff". Nobody checked what an organizer would expect, so the organizer saw no Door tab at all. It was listed as an assumption to confirm, and testing on a phone showed it was the wrong call.
+- The door page only offered the camera when the browser had `BarcodeDetector`. Safari has none, so my iPhone showed no scan button, and the advice in the docs ("use the phone's own camera app") is exactly what sent me to a Safari search, because the QR holds plain text, not a web address.
+- A new test "every file in public/ is served with the right type" failed for the new `.mjs` file: the server did not know that type, and a browser refuses to run a module script with a wrong type. I added the type to the server, not an exception to the test.
+- My own rule "no outside web addresses in the code" failed because a code comment in `scan.js` contained an example address. I reworded the comment, not the rule.
+- The old test "an organizer cannot scan" was a test of the old rule. I replaced it on purpose with "an organizer can scan their own event and only their own", and kept the attendee and visitor checks.
+- In the first screenshot the green or red result was below the camera picture, out of sight on a small phone. I moved it above the camera.
+
+**Rules I was unsure about (assumptions to confirm with the instructor):**
+- The brief only talks about staff scanning. I let the organizer of an event scan too (own events only). Is that acceptable, or must it stay staff only?
+- The brief says outside packages are not allowed. jsQR is an outside library; I copied it into `public/js/vendor/` as a file (no `npm` package, no network call, licence kept, a test checks it makes no network calls). If this is not allowed, the fallback is to remove it and keep paste-the-code only.
+- The camera needs `https://` or `localhost`. On a plain `http://192.168...` address Safari blocks it by design; the page says so.
+
+**Not done yet:** a test with my own iPhone over `https://`; the debugging exercise write-up (`docs/debugging-exercise.md`).
+
+**What I learned:** a feature that works on one browser (Chrome) can be missing on another (Safari), so test on the phone you will really use; a QR code that holds plain text opens a web search in the Camera app, so scan inside the app; "staff only" is a rule about people, and the first thing to ask is who really needs the page; a test that fails for a new file type is telling you the server has a blind spot.
