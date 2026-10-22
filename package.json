@@ -1,15 +1,23 @@
 {
-  "name": "ticketing-capstone",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Event Ticketing and Booking - course capstone, built one milestone per Build session",
-  "type": "module",
-  "engines": {
-    "node": ">=22.13"
+  "name": "event-ticketing-capstone-dsa-project",
+  "version": "1.0.0",
+  "description": "A full-stack event ticketing and booking platform built in stages.",
+  "homepage": "https://github.com/nifty008/dsa-2026-project#readme",
+  "bugs": {
+    "url": "https://github.com/nifty008/dsa-2026-project/issues"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifty008/dsa-2026-project.git"
+  },
+  "type": "module",
+  "main": "index.js",
   "scripts": {
-    "test": "node --disable-warning=ExperimentalWarning --test --test-reporter=spec",
     "demo": "node scripts/demo.js",
     "benchmark": "node scripts/benchmark-lookup.js"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }
+  
